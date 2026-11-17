@@ -7,6 +7,8 @@ pub enum BaseEncoding {
     WinAnsi,
     MacRoman,
     Standard,
+    Symbol,
+    ZapfDingbats,
 }
 
 impl BaseEncoding {
@@ -14,21 +16,27 @@ impl BaseEncoding {
         match name {
             "MacRomanEncoding" => Self::MacRoman,
             "StandardEncoding" => Self::Standard,
+            "SymbolEncoding" => Self::Symbol,
+            "ZapfDingbatsEncoding" => Self::ZapfDingbats,
             _ => Self::WinAnsi,
         }
     }
 
     pub fn decode_byte(self, b: u8) -> Option<String> {
         match self {
-            Self::WinAnsi => {
-                let ch = winansi_byte_to_char(b);
-                Some(ch.to_string())
-            }
-            Self::MacRoman => {
-                let ch = macroman_byte_to_char(b);
-                Some(ch.to_string())
-            }
+            Self::WinAnsi => Some(winansi_byte_to_char(b).to_string()),
+            Self::MacRoman => Some(macroman_byte_to_char(b).to_string()),
             Self::Standard => standard_byte_to_str(b).map(ToString::to_string),
+            Self::Symbol => {
+                if let Some(s) = symbol_code_to_str(b as u32) {
+                    Some(s.to_string())
+                } else if (0x20..=0x7E).contains(&b) {
+                    Some((b as char).to_string())
+                } else {
+                    None
+                }
+            }
+            Self::ZapfDingbats => zapf_dingbats_byte_to_str(b).map(ToString::to_string),
         }
     }
 }
@@ -288,14 +296,18 @@ fn insert_bfrange_sequential(
             u16::from_str_radix(&clean[0..4], 16),
             u16::from_str_radix(&clean[4..8], 16),
         ) {
-            for (offset, code) in (start..=capped_end).enumerate() {
-                let lo = lo_start.wrapping_add(offset as u16);
-                let s = String::from_utf16_lossy(&[hi, lo]);
-                if !s.is_empty() {
-                    out.insert(code, s);
+            if (0xD800..=0xDBFF).contains(&hi) && (0xDC00..=0xDFFF).contains(&lo_start) {
+                for (offset, code) in (start..=capped_end).enumerate() {
+                    let lo = lo_start.wrapping_add(offset as u16);
+                    if (0xDC00..=0xDFFF).contains(&lo) {
+                        let s = String::from_utf16_lossy(&[hi, lo]);
+                        if !s.is_empty() {
+                            out.insert(code, s);
+                        }
+                    }
                 }
+                return;
             }
-            return;
         }
     }
     if let Ok(mut dst_code) = u32::from_str_radix(&clean, 16) {
@@ -422,6 +434,27 @@ pub fn glyph_name_to_unicode(name: &str, base_font: &str) -> Option<String> {
         }
     }
 
+    // Compound ligature names separated by `_` (e.g. `T_h`, `uni0066_uni0069`)
+    if name.contains('_') && !name.starts_with('_') && !name.ends_with('_') {
+        let mut combined = String::new();
+        let mut all_ok = true;
+        for part in name.split('_') {
+            if part.is_empty() {
+                all_ok = false;
+                break;
+            }
+            if let Some(sub) = glyph_name_to_unicode(part, base_font) {
+                combined.push_str(&sub);
+            } else {
+                all_ok = false;
+                break;
+            }
+        }
+        if all_ok && !combined.is_empty() {
+            return Some(combined);
+        }
+    }
+
     None
 }
 
@@ -503,19 +536,78 @@ fn zapf_dingbats_a_glyph(code: u32) -> Option<&'static str> {
     }
 }
 
-fn symbol_code_to_str(code: u32) -> Option<&'static str> {
+fn zapf_dingbats_byte_to_str(b: u8) -> Option<&'static str> {
+    match b {
+        0x20 => Some(" "),
+        0x21 => Some("✁"),
+        0x22 => Some("✂"),
+        0x23 => Some("✃"),
+        0x24 => Some("✄"),
+        0x25 => Some("☎"),
+        0x26 => Some("✆"),
+        0x27 => Some("✇"),
+        0x28 => Some("✈"),
+        0x29 => Some("✉"),
+        0x2A => Some("☛"),
+        0x2B => Some("☞"),
+        0x2C => Some("✌"),
+        0x2D => Some("✍"),
+        0x2E => Some("✎"),
+        0x2F => Some("✏"),
+        0x33 => Some("✔"),
+        0x34 => Some("✔"),
+        0x35 => Some("✕"),
+        0x36 => Some("✖"),
+        0x37 => Some("✗"),
+        0x38 => Some("✘"),
+        0x48 => Some("★"),
+        0x49 => Some("☆"),
+        0x6C => Some("●"),
+        0x6D => Some("❍"),
+        0x6E => Some("■"),
+        0x6F => Some("❏"),
+        0x70 => Some("❐"),
+        0x71 => Some("❑"),
+        0x72 => Some("❒"),
+        0x73 => Some("▲"),
+        0x74 => Some("▼"),
+        0x75 => Some("◆"),
+        0xD4 => Some("→"),
+        0xD5 => Some("➔"),
+        0xD9 => Some("➜"),
+        _ => None,
+    }
+}
+
+pub fn symbol_code_to_str(code: u32) -> Option<&'static str> {
     match code {
         32..=64 => None,
+        65 => Some("Α"),
+        66 => Some("Β"),
+        67 => Some("Χ"),
         68 => Some("Δ"),
+        69 => Some("Ε"),
         70 => Some("Φ"),
         71 => Some("Γ"),
+        72 => Some("Η"),
+        73 => Some("Ι"),
+        74 => Some("ϑ"),
+        75 => Some("Κ"),
         76 => Some("Λ"),
+        77 => Some("Μ"),
+        78 => Some("Ν"),
+        79 => Some("Ο"),
         80 => Some("Π"),
         81 => Some("Θ"),
+        82 => Some("Ρ"),
         83 => Some("Σ"),
+        84 => Some("Τ"),
+        85 => Some("Υ"),
+        86 => Some("ς"),
         87 => Some("Ω"),
         88 => Some("Ξ"),
         89 => Some("Ψ"),
+        90 => Some("Ζ"),
         97 => Some("α"),
         98 => Some("β"),
         99 => Some("χ"),
@@ -525,35 +617,82 @@ fn symbol_code_to_str(code: u32) -> Option<&'static str> {
         103 => Some("γ"),
         104 => Some("η"),
         105 => Some("ι"),
+        106 => Some("ϕ"),
         107 => Some("κ"),
         108 => Some("λ"),
         109 => Some("µ"),
         110 => Some("ν"),
+        111 => Some("ο"),
         112 => Some("π"),
         113 => Some("θ"),
         114 => Some("ρ"),
         115 => Some("σ"),
         116 => Some("τ"),
         117 => Some("υ"),
+        118 => Some("ϖ"),
         119 => Some("ω"),
         120 => Some("ξ"),
         121 => Some("ψ"),
         122 => Some("ζ"),
+        161 => Some("ϒ"),
+        162 => Some("′"),
         163 => Some("≤"),
+        164 => Some("⁄"),
         165 => Some("∞"),
+        166 => Some("ƒ"),
+        167 => Some("♣"),
+        168 => Some("♦"),
+        169 => Some("♥"),
+        170 => Some("♠"),
+        171 => Some("↔"),
+        172 => Some("←"),
+        173 => Some("↑"),
+        174 => Some("→"),
+        175 => Some("↓"),
+        176 => Some("°"),
         177 => Some("±"),
+        178 => Some("″"),
         179 => Some("≥"),
         180 => Some("×"),
+        181 => Some("∝"),
+        182 => Some("∂"),
+        183 => Some("•"),
         184 => Some("÷"),
         185 => Some("≠"),
         186 => Some("≡"),
         187 => Some("≈"),
         188 => Some("…"),
+        196 => Some("⊗"),
+        197 => Some("⊕"),
+        198 => Some("∅"),
+        199 => Some("∩"),
+        200 => Some("∪"),
+        201 => Some("⊃"),
+        202 => Some("⊇"),
+        203 => Some("⊄"),
+        204 => Some("⊂"),
+        205 => Some("⊆"),
+        206 => Some("∈"),
+        207 => Some("∉"),
+        208 => Some("∠"),
+        209 => Some("∇"),
         210 => Some("®"),
         211 => Some("©"),
         212 => Some("™"),
+        213 => Some("∏"),
         214 => Some("√"),
         215 => Some("·"),
+        216 => Some("¬"),
+        217 => Some("∧"),
+        218 => Some("∨"),
+        219 => Some("⇔"),
+        220 => Some("⇐"),
+        221 => Some("⇑"),
+        222 => Some("⇒"),
+        223 => Some("⇓"),
+        224 => Some("◊"),
+        229 => Some("∑"),
+        242 => Some("∫"),
         _ => None,
     }
 }
@@ -778,14 +917,52 @@ fn static_glyph_name_to_unicode(name: &str) -> Option<&'static str> {
         "Lslash" => Some("Ł"), "lslash" => Some("ł"),
         "Scaron" => Some("Š"), "scaron" => Some("š"),
         "Zcaron" => Some("Ž"), "zcaron" => Some("ž"),
-        "alpha" => Some("α"), "beta" => Some("β"),
-        "gamma" => Some("γ"), "delta" => Some("δ"),
-        "epsilon" => Some("ε"), "theta" => Some("θ"),
-        "lambda" => Some("λ"), "mu" | "micro" => Some("µ"),
-        "pi" => Some("π"), "rho" => Some("ρ"),
-        "sigma" => Some("σ"), "tau" => Some("τ"),
-        "phi" => Some("φ"), "omega" => Some("ω"),
-        "Delta" => Some("Δ"), "Sigma" => Some("Σ"), "Omega" => Some("Ω"),
+        "Eth" => Some("Ð"), "eth" => Some("ð"),
+        "Thorn" => Some("Þ"), "thorn" => Some("þ"),
+        "ordfeminine" => Some("ª"), "ordmasculine" => Some("º"),
+        "onesuperior" => Some("¹"), "twosuperior" => Some("²"), "threesuperior" => Some("³"),
+        "onequarter" => Some("¼"), "onehalf" => Some("½"), "threequarters" => Some("¾"),
+        "brokenbar" => Some("¦"), "currency" => Some("¤"), "florin" => Some("ƒ"),
+        "lozenge" => Some("◊"), "logicalnot" => Some("¬"), "macron" => Some("¯"),
+        "prime" | "minute" => Some("′"),
+        "second" => Some("″"),
+        "equivalence" => Some("≡"), "propersubset" => Some("⊂"), "propersuperset" => Some("⊃"),
+        "reflexsubset" => Some("⊆"), "reflexsuperset" => Some("⊇"), "notsubset" => Some("⊄"),
+        "element" => Some("∈"), "notelement" => Some("∉"), "suchthat" => Some("∋"),
+        "emptyset" => Some("∅"), "universal" => Some("∀"), "existential" => Some("∃"),
+        "gradient" => Some("∇"), "angle" => Some("∠"), "perpendicular" => Some("⊥"),
+        "intersection" => Some("∩"), "union" => Some("∪"), "proportional" => Some("∝"),
+        "similar" => Some("∼"), "congruent" => Some("≅"), "therefore" => Some("∴"),
+        "logicaland" => Some("∧"), "logicalor" => Some("∨"),
+        "arrowboth" => Some("↔"), "carriagereturn" => Some("↵"),
+        "arrowdblleft" => Some("⇐"), "arrowdblright" => Some("⇒"),
+        "arrowdblup" => Some("⇑"), "arrowdbldown" => Some("⇓"), "arrowdblboth" => Some("⇔"),
+        "circlemultiply" => Some("⊗"), "circleplus" => Some("⊕"),
+        "asteriskmath" => Some("∗"), "dotmath" => Some("⋅"),
+        "aleph" => Some("ℵ"), "Weierstrass" => Some("℘"),
+        "Ifraktur" => Some("ℑ"), "Rfraktur" => Some("ℜ"),
+        "club" => Some("♣"), "diamond" => Some("♦"), "heart" => Some("♥"), "spade" => Some("♠"),
+        "H18533" => Some("●"),
+        "H18543" => Some("○"),
+        "H18551" => Some("▪"),
+        "H18552" => Some("▫"),
+        "Alpha" => Some("Α"), "Beta" => Some("Β"), "Gamma" => Some("Γ"),
+        "Delta" => Some("Δ"), "Epsilon" => Some("Ε"), "Zeta" => Some("Ζ"),
+        "Eta" => Some("Η"), "Theta" => Some("Θ"), "Iota" => Some("Ι"),
+        "Kappa" => Some("Κ"), "Lambda" => Some("Λ"), "Mu" => Some("Μ"),
+        "Nu" => Some("Ν"), "Xi" => Some("Ξ"), "Omicron" => Some("Ο"),
+        "Pi" => Some("Π"), "Rho" => Some("Ρ"), "Sigma" => Some("Σ"),
+        "Tau" => Some("Τ"), "Upsilon" => Some("Υ"), "Upsilon1" => Some("ϒ"),
+        "Phi" => Some("Φ"), "Chi" => Some("Χ"), "Psi" => Some("Ψ"), "Omega" => Some("Ω"),
+        "alpha" => Some("α"), "beta" => Some("β"), "gamma" => Some("γ"),
+        "delta" => Some("δ"), "epsilon" => Some("ε"), "zeta" => Some("ζ"),
+        "eta" => Some("η"), "theta" => Some("θ"), "theta1" => Some("ϑ"),
+        "iota" => Some("ι"), "kappa" => Some("κ"), "lambda" => Some("λ"),
+        "mu" | "mu1" | "micro" => Some("µ"), "nu" => Some("ν"), "xi" => Some("ξ"),
+        "omicron" => Some("ο"), "pi" => Some("π"), "rho" => Some("ρ"),
+        "sigma" => Some("σ"), "sigma1" => Some("ς"), "tau" => Some("τ"),
+        "upsilon" => Some("υ"), "phi" => Some("φ"), "phi1" => Some("ϕ"),
+        "chi" => Some("χ"), "psi" => Some("ψ"), "omega" => Some("ω"), "omega1" => Some("ϖ"),
         _ => None,
     }
 }

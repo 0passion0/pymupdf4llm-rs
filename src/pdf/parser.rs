@@ -1,12 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
-use flate2::read::ZlibDecoder;
+use flate2::read::{DeflateDecoder, ZlibDecoder};
 
 use crate::config::Rect;
 use crate::error::{PdfError, Result};
 use crate::markdown::chunk::TocItem;
 use crate::pdf::objects::PdfObject;
 use crate::pdf::{DocumentMetadata, InheritedPageProps, PdfDocument};
+
+const MAX_TREE_DEPTH: usize = 64;
 
 pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
     let header_pos = find_subsequence(bytes, b"%PDF-")
@@ -20,36 +22,55 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
 
     let mut objects: BTreeMap<u32, PdfObject> = BTreeMap::new();
     let mut trailer: BTreeMap<String, PdfObject> = BTreeMap::new();
+    let mut xref_trailers: Vec<(usize, BTreeMap<String, PdfObject>)> = Vec::new();
 
     // Scan indirect objects (`<num> <gen> obj ... endobj`) across the PDF buffer
-    // to support both classic xref tables, incremental updates, and XRef streams.
+    // to support classic xref tables, incremental updates, and XRef streams.
     let mut cursor = header_pos;
-    while let Some((obj_num, _gen_num, obj, next_pos)) = scan_next_indirect_object(bytes, cursor) {
+    while let Some((obj_num, _gen_num, obj, obj_pos, next_pos)) =
+        scan_next_indirect_object(bytes, cursor)
+    {
+        if let PdfObject::Stream { ref dict, .. } = obj {
+            if dict.get("Type").and_then(|v| v.as_name()) == Some("XRef") {
+                xref_trailers.push((obj_pos, dict.clone()));
+            }
+        }
         objects.insert(obj_num, obj);
         cursor = next_pos;
     }
 
-    // Locate latest trailer dictionary or XRef stream dictionary
-    if let Some(tr_pos) = rfind_subsequence(bytes, b"trailer") {
-        let mut p = Lexer::new(bytes, tr_pos + 7);
-        if let Ok(PdfObject::Dict(d)) = p.parse_object() {
+    // Collect valid classic `trailer << ... >>` dictionaries and merge with any /XRef stream
+    // trailers in reverse file order so incremental updates keep the latest entries while
+    // inheriting Root/Info/Encrypt if omitted in an incremental trailer.
+    let mut classic_trailers = find_valid_classic_trailers(bytes);
+    let mut all_trailers: Vec<(usize, BTreeMap<String, PdfObject>)> = Vec::new();
+    all_trailers.append(&mut classic_trailers);
+    all_trailers.extend(xref_trailers);
+    all_trailers.sort_by_key(|(pos, _)| *pos);
+
+    for (_pos, d) in all_trailers.into_iter().rev() {
+        if trailer.is_empty() {
             trailer = d;
+        } else {
+            for key in ["Root", "Info", "Encrypt"] {
+                if !trailer.contains_key(key) {
+                    if let Some(val) = d.get(key) {
+                        trailer.insert(key.to_string(), val.clone());
+                    }
+                }
+            }
         }
     }
 
-    // Also unpack any /ObjStm (Object Streams, PDF 1.5+) and /XRef trailer dicts without cloning non-ObjStm streams
-    let has_classic_trailer = !trailer.is_empty();
+    // Unpack /ObjStm (Object Streams, PDF 1.5+) without cloning non-ObjStm streams
     let obj_ids: Vec<u32> = objects.keys().copied().collect();
     let mut unpacked_entries: Vec<(u32, PdfObject)> = Vec::new();
     for id in obj_ids {
         if let Some(PdfObject::Stream { dict, data }) = objects.get(&id) {
-            let obj_type = dict.get("Type").and_then(|v| v.as_name());
-            if obj_type == Some("XRef") && !has_classic_trailer {
-                trailer = dict.clone();
-            } else if obj_type == Some("ObjStm") {
+            if dict.get("Type").and_then(|v| v.as_name()) == Some("ObjStm") {
                 if let Ok(decompressed) = decode_stream_bytes(dict, data) {
-                    let n = dict.get("N").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-                    let first = dict.get("First").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                    let n = dict.get("N").and_then(|v| v.as_i64()).unwrap_or(0).max(0) as usize;
+                    let first = dict.get("First").and_then(|v| v.as_i64()).unwrap_or(0).max(0) as usize;
                     collect_object_stream_entries(&decompressed, n, first, &mut unpacked_entries);
                 }
             }
@@ -59,8 +80,8 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
         objects.entry(obj_num).or_insert(obj);
     }
 
-    if trailer.is_empty() {
-        // Fallback: synthesize trailer from /Catalog object if trailer token was omitted
+    if !trailer.contains_key("Root") {
+        // Fallback: synthesize /Root from /Catalog object if trailer token was omitted
         for (id, obj) in &objects {
             if let Some(dict) = obj.as_dict() {
                 if dict.get("Type").and_then(|v| v.as_name()) == Some("Catalog") {
@@ -147,10 +168,13 @@ fn collect_page_tree(
 
     let mut pages = Vec::new();
     let mut inherited = BTreeMap::new();
+    let mut visited = HashSet::new();
     walk_pages_node(
         objects,
         pages_ref,
         InheritedPageProps::default(),
+        0,
+        &mut visited,
         &mut pages,
         &mut inherited,
     );
@@ -184,9 +208,14 @@ fn walk_pages_node(
     objects: &BTreeMap<u32, PdfObject>,
     node_ref: (u32, u16),
     mut parent_props: InheritedPageProps,
+    depth: usize,
+    visited: &mut HashSet<u32>,
     out: &mut Vec<(u32, u16)>,
     inherited_map: &mut BTreeMap<u32, InheritedPageProps>,
 ) {
+    if depth > MAX_TREE_DEPTH || !visited.insert(node_ref.0) {
+        return;
+    }
     let Some(dict) = objects.get(&node_ref.0).and_then(|o| o.as_dict()) else {
         return;
     };
@@ -205,7 +234,22 @@ fn walk_pages_node(
         .and_then(|o| o.as_dict())
     {
         for (k, v) in res_dict {
-            parent_props.resources.insert(k.clone(), v.clone());
+            match (parent_props.resources.get_mut(k), resolve_obj_map(objects, v)) {
+                (Some(PdfObject::Dict(existing)), Some(PdfObject::Dict(overlay))) => {
+                    for (sk, sv) in overlay {
+                        existing.insert(sk.clone(), sv.clone());
+                    }
+                }
+                _ => {
+                    if let Some(PdfObject::Dict(overlay)) = resolve_obj_map(objects, v) {
+                        parent_props
+                            .resources
+                            .insert(k.clone(), PdfObject::Dict(overlay.clone()));
+                    } else {
+                        parent_props.resources.insert(k.clone(), v.clone());
+                    }
+                }
+            }
         }
     }
 
@@ -218,7 +262,15 @@ fn walk_pages_node(
     if let Some(kids) = dict.get("Kids").and_then(|v| v.as_array()) {
         for kid in kids {
             if let Some(kid_ref) = kid.as_reference() {
-                walk_pages_node(objects, kid_ref, parent_props.clone(), out, inherited_map);
+                walk_pages_node(
+                    objects,
+                    kid_ref,
+                    parent_props.clone(),
+                    depth + 1,
+                    visited,
+                    out,
+                    inherited_map,
+                );
             }
         }
     } else if node_type != Some("Pages") {
@@ -272,7 +324,8 @@ fn extract_outlines(
         return toc;
     };
     if let Some(first_ref) = outlines.get("First").and_then(|v| v.as_reference()) {
-        walk_outline_siblings(objects, first_ref, 1, page_refs, &mut toc);
+        let mut visited = HashSet::new();
+        walk_outline_siblings(objects, first_ref, 1, &mut visited, page_refs, &mut toc);
     }
     toc
 }
@@ -281,11 +334,15 @@ fn walk_outline_siblings(
     objects: &BTreeMap<u32, PdfObject>,
     mut current_ref: (u32, u16),
     level: usize,
+    visited: &mut HashSet<u32>,
     page_refs: &[(u32, u16)],
     out: &mut Vec<TocItem>,
 ) {
+    if level > MAX_TREE_DEPTH {
+        return;
+    }
     let mut guard = 0usize;
-    while guard < 4096 {
+    while guard < 4096 && visited.insert(current_ref.0) {
         guard += 1;
         let Some(dict) = objects.get(&current_ref.0).and_then(|o| o.as_dict()) else {
             break;
@@ -299,7 +356,7 @@ fn walk_outline_siblings(
             out.push((level, title, page_num));
         }
         if let Some(child_ref) = dict.get("First").and_then(|v| v.as_reference()) {
-            walk_outline_siblings(objects, child_ref, level + 1, page_refs, out);
+            walk_outline_siblings(objects, child_ref, level + 1, visited, page_refs, out);
         }
         match dict.get("Next").and_then(|v| v.as_reference()) {
             Some(next_ref) => current_ref = next_ref,
@@ -341,6 +398,60 @@ fn resolve_dest_page(
 
 const MAX_DECOMPRESSED_STREAM_BYTES: usize = 64 * 1024 * 1024;
 
+fn decode_parms_for_filter<'a>(
+    dict: &'a BTreeMap<String, PdfObject>,
+    idx: usize,
+) -> Option<&'a BTreeMap<String, PdfObject>> {
+    match dict.get("DecodeParms") {
+        Some(PdfObject::Dict(d)) => Some(d),
+        Some(PdfObject::Array(arr)) => arr.get(idx).and_then(|v| v.as_dict()),
+        _ => None,
+    }
+}
+
+fn decompress_flate_resilient(input: &[u8]) -> Result<Vec<u8>> {
+    let decoder = ZlibDecoder::new(input);
+    let mut limited = decoder.take((MAX_DECOMPRESSED_STREAM_BYTES + 1) as u64);
+    let mut out = Vec::new();
+    match limited.read_to_end(&mut out) {
+        Ok(_) => {
+            if out.len() > MAX_DECOMPRESSED_STREAM_BYTES {
+                return Err(PdfError::Decompress {
+                    filter: "FlateDecode".into(),
+                    message: "Decompressed stream exceeded 64 MB safety limit".into(),
+                });
+            }
+            Ok(out)
+        }
+        Err(e) => {
+            if out.len() > MAX_DECOMPRESSED_STREAM_BYTES {
+                return Err(PdfError::Decompress {
+                    filter: "FlateDecode".into(),
+                    message: "Decompressed stream exceeded 64 MB safety limit".into(),
+                });
+            }
+            // Recover truncated zlib streams if valid content was already decoded
+            if out.len() >= 8 {
+                return Ok(out);
+            }
+            // Fallback for non-standard raw deflate streams lacking zlib header
+            let raw_dec = DeflateDecoder::new(input);
+            let mut raw_lim = raw_dec.take((MAX_DECOMPRESSED_STREAM_BYTES + 1) as u64);
+            let mut raw_out = Vec::new();
+            if raw_lim.read_to_end(&mut raw_out).is_ok()
+                && raw_out.len() <= MAX_DECOMPRESSED_STREAM_BYTES
+                && !raw_out.is_empty()
+            {
+                return Ok(raw_out);
+            }
+            Err(PdfError::Decompress {
+                filter: "FlateDecode".into(),
+                message: e.to_string(),
+            })
+        }
+    }
+}
+
 pub fn decode_stream_bytes(dict: &BTreeMap<String, PdfObject>, raw: &[u8]) -> Result<Vec<u8>> {
     let filters: Vec<String> = match dict.get("Filter") {
         None => return Ok(raw.to_vec()),
@@ -353,24 +464,13 @@ pub fn decode_stream_bytes(dict: &BTreeMap<String, PdfObject>, raw: &[u8]) -> Re
     };
 
     let mut data = raw.to_vec();
-    for filter in filters {
+    for (idx, filter) in filters.into_iter().enumerate() {
+        let parms = decode_parms_for_filter(dict, idx);
         data = match filter.as_str() {
             "FlateDecode" | "Fl" => {
-                let decoder = ZlibDecoder::new(data.as_slice());
-                let mut limited = decoder.take((MAX_DECOMPRESSED_STREAM_BYTES + 1) as u64);
-                let mut out = Vec::new();
-                limited.read_to_end(&mut out).map_err(|e| PdfError::Decompress {
-                    filter: "FlateDecode".into(),
-                    message: e.to_string(),
-                })?;
-                if out.len() > MAX_DECOMPRESSED_STREAM_BYTES {
-                    return Err(PdfError::Decompress {
-                        filter: "FlateDecode".into(),
-                        message: "Decompressed stream exceeded 64 MB safety limit".into(),
-                    });
-                }
-                if let Some(parms) = dict.get("DecodeParms").and_then(|v| v.as_dict()) {
-                    apply_png_predictor(parms, &out).unwrap_or(out)
+                let out = decompress_flate_resilient(&data)?;
+                if let Some(parms) = parms {
+                    apply_predictor(parms, &out).unwrap_or(out)
                 } else {
                     out
                 }
@@ -379,16 +479,14 @@ pub fn decode_stream_bytes(dict: &BTreeMap<String, PdfObject>, raw: &[u8]) -> Re
             "ASCII85Decode" | "A85" => decode_ascii85(&data)?,
             "RunLengthDecode" | "RL" => decode_run_length(&data)?,
             "LZWDecode" | "LZW" => {
-                let early = dict
-                    .get("DecodeParms")
-                    .and_then(|v| v.as_dict())
+                let early = parms
                     .and_then(|d| d.get("EarlyChange"))
                     .and_then(|v| v.as_i64())
                     .unwrap_or(1)
                     != 0;
                 let decoded = decode_lzw(&data, early)?;
-                if let Some(parms) = dict.get("DecodeParms").and_then(|v| v.as_dict()) {
-                    apply_png_predictor(parms, &decoded).unwrap_or(decoded)
+                if let Some(parms) = parms {
+                    apply_predictor(parms, &decoded).unwrap_or(decoded)
                 } else {
                     decoded
                 }
@@ -409,7 +507,7 @@ fn decode_lzw(data: &[u8], early_change: bool) -> Result<Vec<u8>> {
     let mut bit_pos = 0usize;
 
     let read_bits = |pos: &mut usize, width: usize| -> Option<u32> {
-        if *pos + width > data.len() * 8 {
+        if pos.saturating_add(width) > data.len().saturating_mul(8) {
             return None;
         }
         let mut val = 0u32;
@@ -472,17 +570,39 @@ fn decode_lzw(data: &[u8], early_change: bool) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn apply_png_predictor(parms: &BTreeMap<String, PdfObject>, data: &[u8]) -> Option<Vec<u8>> {
+fn apply_predictor(parms: &BTreeMap<String, PdfObject>, data: &[u8]) -> Option<Vec<u8>> {
     let predictor = parms.get("Predictor").and_then(|v| v.as_i64()).unwrap_or(1);
+    if predictor <= 1 {
+        return None;
+    }
+    let cols = parms.get("Columns").and_then(|v| v.as_i64()).unwrap_or(1).clamp(1, 1_000_000) as usize;
+    let bpc = parms.get("BitsPerComponent").and_then(|v| v.as_i64()).unwrap_or(8).clamp(1, 32) as usize;
+    let colors = parms.get("Colors").and_then(|v| v.as_i64()).unwrap_or(1).clamp(1, 64) as usize;
+    let bpp = ((colors.saturating_mul(bpc) + 7) / 8).max(1);
+    let row_bytes = (cols.saturating_mul(colors).saturating_mul(bpc) + 7) / 8;
+    if row_bytes == 0 || row_bytes > MAX_DECOMPRESSED_STREAM_BYTES {
+        return None;
+    }
+
+    if predictor == 2 && bpc == 8 {
+        if data.len() < row_bytes {
+            return None;
+        }
+        let mut out = Vec::with_capacity(data.len());
+        for chunk in data.chunks_exact(row_bytes) {
+            let mut row = chunk.to_vec();
+            for i in bpp..row_bytes {
+                row[i] = row[i].wrapping_add(row[i - bpp]);
+            }
+            out.extend_from_slice(&row);
+        }
+        return Some(out);
+    }
+
     if predictor < 10 {
         return None;
     }
-    let cols = parms.get("Columns").and_then(|v| v.as_i64()).unwrap_or(1) as usize;
-    let bpc = parms.get("BitsPerComponent").and_then(|v| v.as_i64()).unwrap_or(8) as usize;
-    let colors = parms.get("Colors").and_then(|v| v.as_i64()).unwrap_or(1) as usize;
-    let bpp = ((colors * bpc + 7) / 8).max(1);
-    let row_bytes = (cols * colors * bpc + 7) / 8;
-    let stride = row_bytes + 1;
+    let stride = row_bytes.checked_add(1)?;
     if stride <= 1 || data.len() < stride {
         return None;
     }
@@ -647,7 +767,36 @@ fn decode_run_length(data: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn scan_next_indirect_object(bytes: &[u8], start: usize) -> Option<(u32, u16, PdfObject, usize)> {
+fn find_valid_classic_trailers(bytes: &[u8]) -> Vec<(usize, BTreeMap<String, PdfObject>)> {
+    let mut found = Vec::new();
+    let mut pos = 0usize;
+    let needle = b"trailer";
+    while pos + needle.len() <= bytes.len() {
+        let Some(rel) = find_subsequence(&bytes[pos..], needle) else {
+            break;
+        };
+        let kw_pos = pos + rel;
+        let prev_ok = kw_pos == 0 || bytes[kw_pos - 1].is_ascii_whitespace();
+        let next_pos = kw_pos + needle.len();
+        let next_ok = next_pos < bytes.len()
+            && (bytes[next_pos].is_ascii_whitespace() || bytes[next_pos] == b'<');
+        if prev_ok && next_ok {
+            let mut p = Lexer::new(bytes, next_pos);
+            if let Ok(PdfObject::Dict(d)) = p.parse_object() {
+                if d.contains_key("Root") || d.contains_key("Size") || d.contains_key("Prev") {
+                    found.push((kw_pos, d));
+                }
+            }
+        }
+        pos = next_pos;
+    }
+    found
+}
+
+fn scan_next_indirect_object(
+    bytes: &[u8],
+    start: usize,
+) -> Option<(u32, u16, PdfObject, usize, usize)> {
     let mut pos = start;
     while pos < bytes.len() {
         let Some(rel) = find_subsequence(&bytes[pos..], b"obj") else {
@@ -682,7 +831,7 @@ fn scan_next_indirect_object(bytes: &[u8], start: usize) -> Option<(u32, u16, Pd
                     let next_pos = find_subsequence(&bytes[lexer.pos..], b"endobj")
                         .map(|p| lexer.pos + p + 6)
                         .unwrap_or(lexer.pos);
-                    return Some((obj_num, gen_num, obj, next_pos));
+                    return Some((obj_num, gen_num, obj, obj_kw, next_pos));
                 }
             }
         }
@@ -735,6 +884,9 @@ impl<'a> Lexer<'a> {
                 self.skip_ws_and_comments();
                 if self.data[self.pos..].starts_with(b"stream") {
                     self.pos += 6;
+                    while matches!(self.data.get(self.pos), Some(b' ' | b'\t')) {
+                        self.pos += 1;
+                    }
                     if self.data.get(self.pos) == Some(&b'\r') {
                         self.pos += 1;
                     }
@@ -743,20 +895,32 @@ impl<'a> Lexer<'a> {
                     }
                     let stream_start = self.pos;
                     let length = dict.get("Length").and_then(|v| v.as_i64()).map(|l| l.max(0) as usize);
+                    let mut trim_eol = false;
                     let stream_end = if let Some(len) = length {
                         if stream_start + len <= self.data.len() {
                             stream_start + len
                         } else {
+                            trim_eol = true;
                             find_subsequence(&self.data[stream_start..], b"endstream")
                                 .map(|p| stream_start + p)
                                 .unwrap_or(self.data.len())
                         }
                     } else {
+                        trim_eol = true;
                         find_subsequence(&self.data[stream_start..], b"endstream")
                             .map(|p| stream_start + p)
                             .unwrap_or(self.data.len())
                     };
-                    let raw = self.data[stream_start..stream_end].to_vec();
+                    let mut end_slice = stream_end;
+                    if trim_eol && end_slice > stream_start {
+                        if self.data[end_slice - 1] == b'\n' {
+                            end_slice -= 1;
+                        }
+                        if end_slice > stream_start && self.data[end_slice - 1] == b'\r' {
+                            end_slice -= 1;
+                        }
+                    }
+                    let raw = self.data[stream_start..end_slice].to_vec();
                     self.pos = stream_end;
                     if let Some(p) = find_subsequence(&self.data[self.pos..], b"endstream") {
                         self.pos += p + 9;
@@ -771,15 +935,21 @@ impl<'a> Lexer<'a> {
             b'(' => self.parse_literal_string(),
             b'[' => self.parse_array(),
             b'/' => self.parse_name(),
-            b't' if self.data[self.pos..].starts_with(b"true") => {
+            b't' if self.data[self.pos..].starts_with(b"true")
+                && self.is_token_boundary(self.pos + 4) =>
+            {
                 self.pos += 4;
                 Ok(PdfObject::Bool(true))
             }
-            b'f' if self.data[self.pos..].starts_with(b"false") => {
+            b'f' if self.data[self.pos..].starts_with(b"false")
+                && self.is_token_boundary(self.pos + 5) =>
+            {
                 self.pos += 5;
                 Ok(PdfObject::Bool(false))
             }
-            b'n' if self.data[self.pos..].starts_with(b"null") => {
+            b'n' if self.data[self.pos..].starts_with(b"null")
+                && self.is_token_boundary(self.pos + 4) =>
+            {
                 self.pos += 4;
                 Ok(PdfObject::Null)
             }
@@ -793,6 +963,16 @@ impl<'a> Lexer<'a> {
 
     fn peek_at(&self, delta: usize) -> Option<u8> {
         self.data.get(self.pos + delta).copied()
+    }
+
+    fn is_token_boundary(&self, idx: usize) -> bool {
+        match self.data.get(idx) {
+            None => true,
+            Some(&b) => {
+                b.is_ascii_whitespace()
+                    || matches!(b, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'/' | b'%')
+            }
+        }
     }
 
     fn parse_dict(&mut self) -> Result<BTreeMap<String, PdfObject>> {
@@ -810,9 +990,17 @@ impl<'a> Lexer<'a> {
             if self.pos >= self.data.len() {
                 break;
             }
-            let key = match self.parse_name()? {
-                PdfObject::Name(k) => k,
-                _ => unreachable!(),
+            if self.data[self.pos] != b'/' {
+                return Err(PdfError::Syntax {
+                    offset: self.pos,
+                    message: "Expected dictionary key name".into(),
+                });
+            }
+            let PdfObject::Name(key) = self.parse_name()? else {
+                return Err(PdfError::Syntax {
+                    offset: self.pos,
+                    message: "Invalid dictionary key".into(),
+                });
             };
             let val = self.parse_object()?;
             dict.insert(key, val);
@@ -989,7 +1177,10 @@ impl<'a> Lexer<'a> {
                         .unwrap_or(true)
                 {
                     self.pos += 1;
-                    return Ok(PdfObject::Reference(int_val.max(0) as u32, gen_num));
+                    return Ok(PdfObject::Reference(
+                        int_val.clamp(0, u32::MAX as i64) as u32,
+                        gen_num,
+                    ));
                 }
             }
         }
@@ -1002,6 +1193,56 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-fn rfind_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).rposition(|w| w == needle)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::write::{DeflateEncoder, ZlibEncoder};
+    use flate2::Compression;
+    use std::io::Write;
+
+    #[test]
+    fn test_decode_stream_raw_deflate_truncated_zlib_and_tiff_predictor() {
+        let payload = b"BT /F1 12 Tf (Hello Resilient Deflate) Tj ET";
+        let mut raw_enc = DeflateEncoder::new(Vec::new(), Compression::default());
+        raw_enc.write_all(payload).unwrap();
+        let raw_deflate = raw_enc.finish().unwrap();
+
+        let mut dict = BTreeMap::new();
+        dict.insert("Filter".into(), PdfObject::Name("FlateDecode".into()));
+        let decoded_raw = decode_stream_bytes(&dict, &raw_deflate).unwrap();
+        assert_eq!(decoded_raw, payload);
+
+        // Truncated zlib stream (missing Adler-32 trailer) should still recover valid output
+        let mut zlib_enc = ZlibEncoder::new(Vec::new(), Compression::default());
+        zlib_enc.write_all(payload).unwrap();
+        let mut full_zlib = zlib_enc.finish().unwrap();
+        full_zlib.pop();
+        full_zlib.pop();
+        let recovered = decode_stream_bytes(&dict, &full_zlib).unwrap();
+        assert_eq!(recovered, payload);
+
+        // TIFF Predictor 2 with array-typed Filter & DecodeParms
+        let tiff_encoded = vec![10u8, 2u8, 3u8, 20u8, 5u8, 1u8];
+        let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
+        z.write_all(&tiff_encoded).unwrap();
+        let z_bytes = z.finish().unwrap();
+
+        let mut parms = BTreeMap::new();
+        parms.insert("Predictor".into(), PdfObject::Int(2));
+        parms.insert("Columns".into(), PdfObject::Int(3));
+        parms.insert("BitsPerComponent".into(), PdfObject::Int(8));
+        parms.insert("Colors".into(), PdfObject::Int(1));
+
+        let mut tiff_dict = BTreeMap::new();
+        tiff_dict.insert(
+            "Filter".into(),
+            PdfObject::Array(vec![PdfObject::Name("FlateDecode".into())]),
+        );
+        tiff_dict.insert(
+            "DecodeParms".into(),
+            PdfObject::Array(vec![PdfObject::Dict(parms)]),
+        );
+        let tiff_out = decode_stream_bytes(&tiff_dict, &z_bytes).unwrap();
+        assert_eq!(tiff_out, vec![10, 12, 15, 20, 25, 26]);
+    }
 }

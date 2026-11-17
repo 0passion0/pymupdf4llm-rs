@@ -223,7 +223,15 @@ fn apply_option_kwargs(
                 hdr_max_levels = Some(lv);
             }
             "header_body_limit" => {
-                hdr_body_limit = Some(v.extract::<Option<f32>>()?);
+                let lim = v.extract::<Option<f32>>()?;
+                if let Some(val) = lim {
+                    if !val.is_finite() || val <= 0.0 {
+                        return Err(PyValueError::new_err(
+                            "header_body_limit must be finite and > 0",
+                        ));
+                    }
+                }
+                hdr_body_limit = Some(lim);
             }
             "write_images" => opts.write_images = v.extract()?,
             "embed_images" => opts.embed_images = v.extract()?,
@@ -238,7 +246,15 @@ fn apply_option_kwargs(
                 let p: PathBuf = v.extract()?;
                 opts.image_path = p;
             }
-            "image_size_limit" => opts.image_size_limit = v.extract()?,
+            "image_size_limit" => {
+                let lim: f32 = v.extract()?;
+                if !lim.is_finite() || lim < 0.0 {
+                    return Err(PyValueError::new_err(
+                        "image_size_limit must be finite and >= 0",
+                    ));
+                }
+                opts.image_size_limit = lim;
+            }
             "force_text" => opts.force_text = v.extract()?,
             "margins" => opts.margins = parse_margins(&v)?,
             "page_chunks" => opts.page_chunks = v.extract()?,
@@ -250,7 +266,17 @@ fn apply_option_kwargs(
                 }
                 opts.page_width = pw;
             }
-            "page_height" => opts.page_height = v.extract()?,
+            "page_height" => {
+                let ph: Option<f32> = v.extract()?;
+                if let Some(val) = ph {
+                    if !val.is_finite() || val <= 0.0 {
+                        return Err(PyValueError::new_err(
+                            "page_height must be finite and > 0",
+                        ));
+                    }
+                }
+                opts.page_height = ph;
+            }
             "table_strategy" => {
                 let s: String = v.extract()?;
                 opts.table_strategy = parse_table_strategy(&s)?;
@@ -1038,7 +1064,8 @@ impl PdfExtractor {
                 for p in paths {
                     let eng = Arc::clone(&engine);
                     let opt = Arc::clone(&opts);
-                    tasks.push(tokio::spawn(async move {
+                    let p_display = p.to_string_lossy().into_owned();
+                    let handle = tokio::spawn(async move {
                         let t0 = std::time::Instant::now();
                         let path_str = p.to_string_lossy().into_owned();
                         let meta_res = tokio::fs::metadata(&p).await;
@@ -1075,13 +1102,19 @@ impl PdfExtractor {
                             output: out,
                             elapsed_ms: t0.elapsed().as_secs_f64() * 1000.0,
                         }
-                    }));
+                    });
+                    tasks.push((p_display, handle));
                 }
 
                 let mut collected = Vec::with_capacity(tasks.len());
-                for t in tasks {
-                    if let Ok(item) = t.await {
-                        collected.push(item);
+                for (path_str, t) in tasks {
+                    match t.await {
+                        Ok(item) => collected.push(item),
+                        Err(e) => collected.push(ItemOutcome {
+                            path: path_str,
+                            output: Err(format!("Task execution error: {e}")),
+                            elapsed_ms: 0.0,
+                        }),
                     }
                 }
                 collected

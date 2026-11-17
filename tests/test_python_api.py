@@ -123,6 +123,18 @@ def test_safety_limits_and_option_validation() -> None:
     with pytest.raises(ValueError, match="Unknown option"):
         PdfExtractor(unknown_option_flag=True)
 
+    for bad_kwargs in (
+        {"page_width": 0.0},
+        {"page_width": float("nan")},
+        {"page_height": -10.0},
+        {"page_height": float("inf")},
+        {"image_size_limit": -0.1},
+        {"image_size_limit": float("nan")},
+        {"header_body_limit": 0.0},
+    ):
+        with pytest.raises(ValueError):
+            PdfExtractor(**bad_kwargs)
+
 
 def test_multithreaded_gil_release_and_batch(tmp_path: Path) -> None:
     pdf_bytes = build_synthetic_pdf()

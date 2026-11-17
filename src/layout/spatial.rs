@@ -8,6 +8,10 @@ pub struct SpatialGrid {
     cells: HashMap<(i32, i32), Vec<usize>>,
 }
 
+const MIN_GRID_CELL: f32 = -1024.0;
+const MAX_GRID_CELL: f32 = 4096.0;
+const MAX_INSERT_CELLS: i64 = 16_384;
+
 impl SpatialGrid {
     pub fn new(cell_size: f32) -> Self {
         Self {
@@ -16,11 +20,39 @@ impl SpatialGrid {
         }
     }
 
+    #[inline]
+    fn cell_bounds(&self, rect: Rect) -> Option<(i32, i32, i32, i32)> {
+        if !(rect.x0.is_finite()
+            && rect.y0.is_finite()
+            && rect.x1.is_finite()
+            && rect.y1.is_finite())
+        {
+            return None;
+        }
+        let gx0 = (rect.x0 / self.cell_size)
+            .floor()
+            .clamp(MIN_GRID_CELL, MAX_GRID_CELL) as i32;
+        let gy0 = (rect.y0 / self.cell_size)
+            .floor()
+            .clamp(MIN_GRID_CELL, MAX_GRID_CELL) as i32;
+        let gx1 = (rect.x1 / self.cell_size)
+            .floor()
+            .clamp(MIN_GRID_CELL, MAX_GRID_CELL) as i32;
+        let gy1 = (rect.y1 / self.cell_size)
+            .floor()
+            .clamp(MIN_GRID_CELL, MAX_GRID_CELL) as i32;
+        Some((gx0.min(gx1), gy0.min(gy1), gx0.max(gx1), gy0.max(gy1)))
+    }
+
     pub fn insert(&mut self, id: usize, rect: Rect) {
-        let gx0 = (rect.x0 / self.cell_size).floor() as i32;
-        let gy0 = (rect.y0 / self.cell_size).floor() as i32;
-        let gx1 = (rect.x1 / self.cell_size).floor() as i32;
-        let gy1 = (rect.y1 / self.cell_size).floor() as i32;
+        let Some((gx0, gy0, gx1, gy1)) = self.cell_bounds(rect) else {
+            return;
+        };
+        let span_x = (gx1 - gx0) as i64 + 1;
+        let span_y = (gy1 - gy0) as i64 + 1;
+        if span_x.saturating_mul(span_y) > MAX_INSERT_CELLS {
+            return;
+        }
         for gx in gx0..=gx1 {
             for gy in gy0..=gy1 {
                 self.cells.entry((gx, gy)).or_default().push(id);
@@ -29,10 +61,14 @@ impl SpatialGrid {
     }
 
     pub fn query_rect(&self, rect: Rect) -> Vec<usize> {
-        let gx0 = (rect.x0 / self.cell_size).floor() as i32;
-        let gy0 = (rect.y0 / self.cell_size).floor() as i32;
-        let gx1 = (rect.x1 / self.cell_size).floor() as i32;
-        let gy1 = (rect.y1 / self.cell_size).floor() as i32;
+        let Some((gx0, gy0, gx1, gy1)) = self.cell_bounds(rect) else {
+            return Vec::new();
+        };
+        let span_x = (gx1 - gx0) as i64 + 1;
+        let span_y = (gy1 - gy0) as i64 + 1;
+        if span_x.saturating_mul(span_y) > MAX_INSERT_CELLS {
+            return Vec::new();
+        }
         let mut hits = Vec::new();
         for gx in gx0..=gx1 {
             for gy in gy0..=gy1 {
@@ -47,8 +83,15 @@ impl SpatialGrid {
     }
 
     pub fn query_point(&self, x: f32, y: f32) -> &[usize] {
-        let gx = (x / self.cell_size).floor() as i32;
-        let gy = (y / self.cell_size).floor() as i32;
+        if !x.is_finite() || !y.is_finite() {
+            return &[];
+        }
+        let gx = (x / self.cell_size)
+            .floor()
+            .clamp(MIN_GRID_CELL, MAX_GRID_CELL) as i32;
+        let gy = (y / self.cell_size)
+            .floor()
+            .clamp(MIN_GRID_CELL, MAX_GRID_CELL) as i32;
         self.cells.get(&(gx, gy)).map(Vec::as_slice).unwrap_or(&[])
     }
 }

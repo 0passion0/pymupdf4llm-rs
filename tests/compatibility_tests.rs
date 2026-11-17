@@ -397,3 +397,198 @@ fn test_extended_cmap_encodings_inline_images_and_metadata() {
     assert!(chunk.text.contains("After inline image"), "got: {}", chunk.text);
     assert!(!chunk.text.contains("FAKE_TJ"), "got: {}", chunk.text);
 }
+
+#[test]
+fn test_indesign_type1_twobyte_codespace_pua_symbol_and_greek_differences() {
+    // Reproduces Adobe InDesign Type1 fonts whose /ToUnicode declares `<0000> <FFFF>`
+    // even though content streams emit 1-byte character codes, plus SymbolGreek PUA mappings
+    // (`U+F044`, `U+F061`..`U+F06D`), Greek/plot `/Differences`, and `/Span <</ActualText ...>>BDC`.
+    let body_cmap = b"/CIDInit /ProcSet findresource begin\n\
+        12 dict begin begincmap\n\
+        1 begincodespacerange <0000> <FFFF> endcodespacerange\n\
+        1 beginbfrange <0020> <007E> <0020> endbfrange\n\
+        endcmap end end\n";
+
+    let symbol_cmap = b"/CIDInit /ProcSet findresource begin\n\
+        12 dict begin begincmap\n\
+        1 begincodespacerange <0000> <FFFF> endcodespacerange\n\
+        5 beginbfchar\n\
+        <44> <F044>\n\
+        <61> <F061>\n\
+        <62> <F062>\n\
+        <63> <F063>\n\
+        <6D> <F06D>\n\
+        endbfchar\n\
+        endcmap end end\n";
+
+    let page_stream = b"BT\n\
+        /Span <</ActualText (\\376\\377)>>BDC\n\
+        /F1 11 Tf 72 720 Tm (Single-cell RNA-seq 2 of 16) Tj\n\
+        EMC\n\
+        /F2 11 Tf 72 700 Tm (Dabc m) Tj\n\
+        /F3 11 Tf 72 680 Tm (\\001\\002\\003) Tj\n\
+        ET\n";
+
+    let mut pdf = Vec::new();
+    pdf.extend_from_slice(b"%PDF-1.6\n");
+    let objs = vec![
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 6 0 R /F3 8 0 R >> >> /Contents 10 0 R >>\nendobj\n".to_string(),
+        "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /KJJMKO+MinionPro-Regular /Encoding /WinAnsiEncoding /ToUnicode 5 0 R >>\nendobj\n".to_string(),
+        format!(
+            "5 0 obj\n<< /Length {} >>\nstream\n{}endstream\nendobj\n",
+            body_cmap.len(),
+            String::from_utf8_lossy(body_cmap)
+        ),
+        "6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /XXRIQJ+SymbolGreek /Encoding /WinAnsiEncoding /ToUnicode 7 0 R >>\nendobj\n".to_string(),
+        format!(
+            "7 0 obj\n<< /Length {} >>\nstream\n{}endstream\nendobj\n",
+            symbol_cmap.len(),
+            String::from_utf8_lossy(symbol_cmap)
+        ),
+        "8 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /STIXGeneral-Regular /Encoding 9 0 R >>\nendobj\n".to_string(),
+        "9 0 obj\n<< /Type /Encoding /Differences [ 1/Phi/H18533/minute ] >>\nendobj\n".to_string(),
+        format!(
+            "10 0 obj\n<< /Length {} >>\nstream\n{}endstream\nendobj\n",
+            page_stream.len(),
+            String::from_utf8_lossy(page_stream)
+        ),
+    ];
+
+    let mut offsets = Vec::new();
+    for obj in &objs {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(obj.as_bytes());
+    }
+    let xref_pos = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for off in offsets {
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off).as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+            objs.len() + 1,
+            xref_pos
+        )
+        .as_bytes(),
+    );
+
+    let md = to_markdown(pdf.as_slice(), ToMarkdownOptions::default())
+        .unwrap()
+        .into_text();
+    assert!(md.contains("Single-cell RNA-seq 2 of 16"), "got: {md}");
+    assert!(md.contains("Δαβχ"), "got: {md}");
+    assert!(md.contains("µ"), "got: {md}");
+    assert!(md.contains("Φ●′"), "got: {md}");
+}
+
+#[test]
+fn test_cycles_inherited_nested_resources_indirect_length_paths_and_spatial_guards() {
+    use pymupdf4llm_rs::layout::spatial::SpatialGrid;
+    use pymupdf4llm_rs::pdf::encoding::{glyph_name_to_unicode, parse_tounicode_cmap};
+    use pymupdf4llm_rs::Rect;
+
+    // 1. SpatialGrid must safely ignore NaN/Inf/huge rects without OOM or panic
+    let mut grid = SpatialGrid::new(32.0);
+    grid.insert(0, Rect::new(f32::NAN, 0.0, 100.0, 100.0));
+    grid.insert(1, Rect::new(-1e9, -1e9, 1e9, 1e9));
+    grid.insert(2, Rect::new(10.0, 10.0, 50.0, 50.0));
+    assert_eq!(grid.query_rect(Rect::new(0.0, 0.0, 60.0, 60.0)), vec![2]);
+    assert!(grid.query_rect(Rect::new(f32::INFINITY, 0.0, 10.0, 10.0)).is_empty());
+    assert!(grid.query_point(f32::NAN, 10.0).is_empty());
+
+    // 2. Compound underscore glyph names & extended math glyph names
+    assert_eq!(glyph_name_to_unicode("T_h", "Helvetica").as_deref(), Some("Th"));
+    assert_eq!(glyph_name_to_unicode("T_h.liga", "Helvetica").as_deref(), Some("Th"));
+    assert_eq!(
+        glyph_name_to_unicode("uni0041_uni0042", "Helvetica").as_deref(),
+        Some("AB")
+    );
+    assert_eq!(glyph_name_to_unicode("equivalence", "Symbol").as_deref(), Some("≡"));
+    assert_eq!(glyph_name_to_unicode("emptyset", "Symbol").as_deref(), Some("∅"));
+
+    // 3. Surrogate-pair sequential bfrange & invalid 8-hex guard
+    let surr_cmap = parse_tounicode_cmap(
+        b"1 begincodespacerange <0000> <FFFF> endcodespacerange\n\
+          1 beginbfrange <0001> <0002> <D83DDE00> endbfrange\n",
+    );
+    assert_eq!(surr_cmap.mappings.get(&1).map(String::as_str), Some("😀"));
+    assert_eq!(surr_cmap.mappings.get(&2).map(String::as_str), Some("😁"));
+
+    // 4. End-to-end PDF with:
+    //    - Cyclic /Pages kids reference (back-edge to obj 2) and cyclic /Outlines (next -> obj 10)
+    //    - Parent /Pages /Resources /Font /F1 merged with Page /Resources /Font {/F2, /F3#20Sym}
+    //    - Hex-escaped font name `/F3#20Sym` resolving to implicit /BaseFont /Symbol (no /Encoding)
+    //    - Indirect stream /Length (obj 8) + ToUnicode <0000> sentinel fallback
+    //    - Disconnected subpaths `m ... l ... m ... l S` (must yield 2 segments, never 3)
+    let cmap = b"1 begincodespacerange <00> <FF> endcodespacerange\n\
+        1 beginbfchar <41> <0000> endbfchar\n";
+    let page_stream = b"BT\n\
+        /F1 11 Tf 72 720 Tm (A) Tj\n\
+        /F2 11 Tf 72 700 Tm (Inherited+Page) Tj\n\
+        /F3#20Sym 11 Tf 72 680 Tm (Dab) Tj\n\
+        ET\n\
+        0.5 w 72 560 m 160 560 l 320 560 m 420 560 l S\n";
+
+    let mut pdf = Vec::new();
+    pdf.extend_from_slice(b"%PDF-1.5\n");
+    let objs = vec![
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Outlines 9 0 R >>\nendobj\n".to_string(),
+        "2 0 obj\n<< /Type /Pages /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Kids [3 0 R 2 0 R] /Count 1 >>\nendobj\n".to_string(),
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F2 5 0 R /F3#20Sym 6 0 R >> >> /Contents 7 0 R >>\nendobj\n".to_string(),
+        "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode 11 0 R >>\nendobj\n".to_string(),
+        "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n".to_string(),
+        "6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Symbol >>\nendobj\n".to_string(),
+        format!(
+            "7 0 obj\n<< /Length 8 0 R >>\nstream  \r\n{}endstream\nendobj\n",
+            String::from_utf8_lossy(page_stream)
+        ),
+        format!("8 0 obj\n{}\nendobj\n", page_stream.len()),
+        "9 0 obj\n<< /First 10 0 R /Last 10 0 R >>\nendobj\n".to_string(),
+        "10 0 obj\n<< /Title (LoopBookmark) /Next 10 0 R /Dest [3 0 R /Fit] >>\nendobj\n".to_string(),
+        format!(
+            "11 0 obj\n<< /Length {} >>\nstream\n{}endstream\nendobj\n",
+            cmap.len(),
+            String::from_utf8_lossy(cmap)
+        ),
+    ];
+
+    let mut offsets = Vec::new();
+    for obj in &objs {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(obj.as_bytes());
+    }
+    let xref_pos = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for off in offsets {
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off).as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+            objs.len() + 1,
+            xref_pos
+        )
+        .as_bytes(),
+    );
+
+    let doc = PdfDocument::from_bytes(&pdf).unwrap();
+    assert_eq!(doc.page_count(), 1);
+    assert_eq!(doc.get_toc().len(), 1);
+    let parsed_page = doc.parse_page(0, &ToMarkdownOptions::default()).unwrap();
+    assert_eq!(
+        parsed_page.segments.len(),
+        2,
+        "disconnected m..l subpaths must not bridge: {:?}",
+        parsed_page.segments
+    );
+
+    let MarkdownOutput::Text(md) = to_markdown(pdf.as_slice(), ToMarkdownOptions::default()).unwrap() else {
+        panic!("expected text");
+    };
+    assert!(md.contains("A"), "ToUnicode <0000> should fall back to 'A', got: {md}");
+    assert!(md.contains("**Inherited+Page**"), "got: {md}");
+    assert!(md.contains("Δαβ"), "implicit Symbol encoding failed, got: {md}");
+}

@@ -6,7 +6,8 @@ use std::sync::{Arc, OnceLock};
 use dashmap::DashMap;
 
 use crate::pdf::encoding::{
-    glyph_name_to_unicode, parse_tounicode_cmap, BaseEncoding, ParsedToUnicodeCMap,
+    glyph_name_to_unicode, parse_tounicode_cmap, symbol_code_to_str, BaseEncoding,
+    ParsedToUnicodeCMap,
 };
 use crate::pdf::objects::PdfObject;
 use crate::pdf::parser::decode_stream_bytes;
@@ -97,8 +98,19 @@ impl PdfFont {
             || enc_name.contains("Identity-H")
             || enc_name.contains("Identity-V")
             || enc_name.contains("UCS2")
-            || enc_name.contains("UTF16");
-        let base_encoding = BaseEncoding::from_pdf_name(enc_name);
+            || enc_name.contains("UTF16")
+            || dict.contains_key("DescendantFonts");
+        let base_encoding = if enc_name.is_empty() {
+            if lower == "symbol" || lower.ends_with("+symbol") || lower.ends_with(",symbol") {
+                BaseEncoding::Symbol
+            } else if lower.contains("zapfdingbats") {
+                BaseEncoding::ZapfDingbats
+            } else {
+                BaseEncoding::WinAnsi
+            }
+        } else {
+            BaseEncoding::from_pdf_name(enc_name)
+        };
 
         let mut is_bold = lower.contains("bold")
             || lower.contains("black")
@@ -197,7 +209,11 @@ impl PdfFont {
             520.0
         });
 
-        let first_char = dict.get("FirstChar").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+        let first_char = dict
+            .get("FirstChar")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            .clamp(0, u32::MAX as i64) as u32;
         if let Some(arr) = dict
             .get("Widths")
             .and_then(|o| doc.resolve(o))
@@ -205,7 +221,7 @@ impl PdfFont {
         {
             for (idx, w) in arr.iter().enumerate() {
                 if let Some(val) = w.as_f32() {
-                    widths.insert(first_char + idx as u32, val);
+                    widths.insert(first_char.saturating_add(idx as u32), val);
                 }
             }
         }
@@ -249,10 +265,19 @@ impl PdfFont {
     }
 
     pub fn decode_bytes(&self, bytes: &[u8]) -> (String, f32) {
+        let (out, total_width, _, _) = self.decode_bytes_with_stats(bytes);
+        (out, total_width)
+    }
+
+    pub fn decode_bytes_with_stats(&self, bytes: &[u8]) -> (String, f32, usize, usize) {
         let mut out = String::new();
         let mut total_width = 0.0f32;
+        let mut glyph_count = 0usize;
+        let mut space_count = 0usize;
 
-        if !self.to_unicode.codespaces.is_empty() {
+        // Simple fonts (Type1/MMType1/TrueType/Type3) always use single-byte codes in content
+        // streams even when authoring tools (e.g. Adobe InDesign) emit `<0000> <FFFF>` in ToUnicode.
+        if self.is_two_byte && !self.to_unicode.codespaces.is_empty() {
             let mut i = 0usize;
             while i < bytes.len() {
                 let mut matched: Option<(u32, usize)> = None;
@@ -263,16 +288,21 @@ impl PdfFont {
                     }
                 }
                 let (code, step) = matched.unwrap_or_else(|| {
-                    if self.is_two_byte && i + 1 < bytes.len() {
+                    if i + 1 < bytes.len() {
                         (u16::from_be_bytes([bytes[i], bytes[i + 1]]) as u32, 2)
                     } else {
                         (bytes[i] as u32, 1)
                     }
                 });
 
+                glyph_count += 1;
+                if step == 1 && bytes[i] == b' ' {
+                    space_count += 1;
+                }
+
                 if let Some(mapped) = self.to_unicode.mappings.get(&code) {
-                    if !mapped.is_empty() && mapped != "\u{FFFD}" {
-                        out.push_str(mapped);
+                    if let Some(norm) = self.normalize_tounicode_mapping(code, step, mapped) {
+                        out.push_str(&norm);
                     } else if step == 1 {
                         self.decode_single_byte_fallback(bytes[i], &mut out);
                     }
@@ -286,15 +316,27 @@ impl PdfFont {
                 total_width += self.widths.get(&code).copied().unwrap_or(self.default_width);
                 i += step.max(1);
             }
-            return (out, total_width);
+            return (out, total_width, glyph_count, space_count);
         }
 
         if self.is_two_byte && bytes.len() >= 2 {
             let mut i = 0;
             while i + 1 < bytes.len() {
                 let code = u16::from_be_bytes([bytes[i], bytes[i + 1]]) as u32;
+                glyph_count += 1;
                 if let Some(mapped) = self.to_unicode.mappings.get(&code) {
-                    out.push_str(mapped);
+                    if let Some(norm) = self.normalize_tounicode_mapping(code, 2, mapped) {
+                        out.push_str(&norm);
+                    }
+                } else if (0xD800..=0xDBFF).contains(&code) && i + 3 < bytes.len() {
+                    let lo = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]);
+                    if (0xDC00..=0xDFFF).contains(&lo) {
+                        let s = String::from_utf16_lossy(&[code as u16, lo]);
+                        out.push_str(&s);
+                        total_width += self.widths.get(&code).copied().unwrap_or(self.default_width);
+                        i += 4;
+                        continue;
+                    }
                 } else if let Some(ch) = char::from_u32(code) {
                     if !ch.is_control() || ch == '\n' || ch == '\t' {
                         out.push(ch);
@@ -306,9 +348,13 @@ impl PdfFont {
         } else {
             for &b in bytes {
                 let code = b as u32;
+                glyph_count += 1;
+                if b == b' ' {
+                    space_count += 1;
+                }
                 if let Some(mapped) = self.to_unicode.mappings.get(&code) {
-                    if !mapped.is_empty() && mapped != "\u{FFFD}" {
-                        out.push_str(mapped);
+                    if let Some(norm) = self.normalize_tounicode_mapping(code, 1, mapped) {
+                        out.push_str(&norm);
                     } else {
                         self.decode_single_byte_fallback(b, &mut out);
                     }
@@ -318,7 +364,52 @@ impl PdfFont {
                 total_width += self.widths.get(&code).copied().unwrap_or(self.default_width);
             }
         }
-        (out, total_width)
+        (out, total_width, glyph_count, space_count)
+    }
+
+    fn normalize_tounicode_mapping(&self, code: u32, step: usize, mapped: &str) -> Option<String> {
+        if mapped.is_empty()
+            || matches!(
+                mapped,
+                "\u{0000}" | "\u{FFFD}" | "\u{FFFE}" | "\u{FFFF}" | "\u{FEFF}"
+            )
+        {
+            return None;
+        }
+        let mut chars = mapped.chars();
+        if let (Some(ch), None) = (chars.next(), chars.next()) {
+            let cp = ch as u32;
+            if (0xE000..=0xF8FF).contains(&cp) {
+                if (0xF020..=0xF0FF).contains(&cp) {
+                    let lower = self.base_font.to_ascii_lowercase();
+                    if lower.contains("symbol") || lower.contains("advpi") {
+                        let byte_cp = cp & 0xFF;
+                        if let Some(sym) = symbol_code_to_str(byte_cp) {
+                            return Some(sym.to_string());
+                        }
+                        if (0x20..=0x7E).contains(&byte_cp) {
+                            return Some((byte_cp as u8 as char).to_string());
+                        }
+                    }
+                }
+                match cp {
+                    0xF001 => return Some("fi".to_string()),
+                    0xF002 => return Some("fl".to_string()),
+                    0xF020 => return Some(" ".to_string()),
+                    0xF02D => return Some("-".to_string()),
+                    0xF0B7 | 0xF076 => return Some("•".to_string()),
+                    0xF0A7 => return Some("▪".to_string()),
+                    0xF0FC | 0xF052 => return Some("✓".to_string()),
+                    _ => {}
+                }
+                if step == 1 {
+                    if let Some(diff) = self.differences.get(&(code as u8)) {
+                        return Some(diff.clone());
+                    }
+                }
+            }
+        }
+        Some(mapped.to_string())
     }
 
     #[inline]
@@ -336,27 +427,31 @@ impl PdfFont {
 fn parse_cid_widths(arr: &[PdfObject], out: &mut HashMap<u32, f32>) {
     let mut i = 0;
     while i < arr.len() {
-        let Some(c_start) = arr[i].as_i64() else {
+        let Some(c_start_raw) = arr[i].as_i64() else {
             i += 1;
             continue;
         };
         if i + 1 >= arr.len() {
             break;
         }
+        let c_start = c_start_raw.clamp(0, u32::MAX as i64) as u32;
         match &arr[i + 1] {
             PdfObject::Array(widths) => {
                 for (offset, w) in widths.iter().enumerate() {
                     if let Some(val) = w.as_f32() {
-                        out.insert((c_start as u32) + offset as u32, val);
+                        out.insert(c_start.saturating_add(offset as u32), val);
                     }
                 }
                 i += 2;
             }
-            PdfObject::Int(c_end) => {
+            PdfObject::Int(c_end_raw) => {
                 if i + 2 < arr.len() {
                     if let Some(w) = arr[i + 2].as_f32() {
-                        for cid in (c_start as u32)..=(*c_end as u32).min(c_start as u32 + 4096) {
-                            out.insert(cid, w);
+                        let c_end = (*c_end_raw).clamp(0, u32::MAX as i64) as u32;
+                        if c_end >= c_start {
+                            for cid in c_start..=c_end.min(c_start.saturating_add(4096)) {
+                                out.insert(cid, w);
+                            }
                         }
                     }
                     i += 3;

@@ -114,7 +114,7 @@ pub fn extract_page(
         .and_then(|r| doc.resolve(r))
         .and_then(|r| r.as_dict())
     {
-        merge_resource_dicts(&mut resources, page_res);
+        merge_resource_dicts(doc, &mut resources, page_res);
     }
 
     let fonts = load_fonts(doc, &resources);
@@ -179,11 +179,36 @@ pub fn extract_page(
 }
 
 fn merge_resource_dicts(
+    doc: &PdfDocument,
     base: &mut BTreeMap<String, PdfObject>,
     overlay: &BTreeMap<String, PdfObject>,
 ) {
     for (k, v) in overlay {
-        base.insert(k.clone(), v.clone());
+        let resolved_overlay = doc.resolve(v).unwrap_or(v);
+        match (base.get_mut(k), resolved_overlay) {
+            (Some(PdfObject::Dict(existing)), PdfObject::Dict(overlay_dict)) => {
+                for (sk, sv) in overlay_dict {
+                    existing.insert(sk.clone(), sv.clone());
+                }
+            }
+            (Some(existing_ref @ PdfObject::Reference(_, _)), PdfObject::Dict(overlay_dict)) => {
+                if let Some(PdfObject::Dict(base_dict)) = doc.resolve(existing_ref) {
+                    let mut merged = base_dict.clone();
+                    for (sk, sv) in overlay_dict {
+                        merged.insert(sk.clone(), sv.clone());
+                    }
+                    base.insert(k.clone(), PdfObject::Dict(merged));
+                } else {
+                    base.insert(k.clone(), PdfObject::Dict(overlay_dict.clone()));
+                }
+            }
+            (_, PdfObject::Dict(overlay_dict)) => {
+                base.insert(k.clone(), PdfObject::Dict(overlay_dict.clone()));
+            }
+            _ => {
+                base.insert(k.clone(), v.clone());
+            }
+        }
     }
 }
 
@@ -323,8 +348,10 @@ fn interpret_content_stream(
     let mut line_matrix = [1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut operands: Vec<StreamToken> = Vec::new();
 
-    let mut path_points: Vec<(f32, f32)> = Vec::new();
+    let mut path_segments: Vec<((f32, f32), (f32, f32))> = Vec::new();
     let mut path_rects: Vec<Rect> = Vec::new();
+    let mut subpath_start: Option<(f32, f32)> = None;
+    let mut cur_pt: Option<(f32, f32)> = None;
 
     for tok in tokens {
         match tok {
@@ -341,27 +368,41 @@ fn interpret_content_stream(
                         gs.ctm = mul_matrix(m, gs.ctm);
                     }
                     "w" if !operands.is_empty() => {
-                        gs.line_width = as_num(&operands[0]);
+                        let n = operands.len();
+                        gs.line_width = as_num(&operands[n - 1]);
                     }
                     "gs" if !operands.is_empty() => {
-                        if let StreamToken::Name(name) = &operands[0] {
+                        let n = operands.len();
+                        if let StreamToken::Name(name) = &operands[n - 1] {
                             if let Some(&a) = ext_alphas.get(name) {
                                 gs.alpha = a;
                             }
                         }
                     }
                     "rg" if operands.len() >= 3 => {
-                        gs.fill_rgb = (as_num(&operands[0]), as_num(&operands[1]), as_num(&operands[2]));
+                        let n = operands.len();
+                        gs.fill_rgb = (
+                            as_num(&operands[n - 3]),
+                            as_num(&operands[n - 2]),
+                            as_num(&operands[n - 1]),
+                        );
                     }
                     "RG" if operands.len() >= 3 => {
-                        gs.stroke_rgb = (as_num(&operands[0]), as_num(&operands[1]), as_num(&operands[2]));
+                        let n = operands.len();
+                        gs.stroke_rgb = (
+                            as_num(&operands[n - 3]),
+                            as_num(&operands[n - 2]),
+                            as_num(&operands[n - 1]),
+                        );
                     }
                     "g" if !operands.is_empty() => {
-                        let v = as_num(&operands[0]);
+                        let n = operands.len();
+                        let v = as_num(&operands[n - 1]);
                         gs.fill_rgb = (v, v, v);
                     }
                     "G" if !operands.is_empty() => {
-                        let v = as_num(&operands[0]);
+                        let n = operands.len();
+                        let v = as_num(&operands[n - 1]);
                         gs.stroke_rgb = (v, v, v);
                     }
                     "BT" => {
@@ -370,34 +411,53 @@ fn interpret_content_stream(
                     }
                     "ET" => {}
                     "Tf" if operands.len() >= 2 => {
-                        if let StreamToken::Name(name) = &operands[0] {
+                        let n = operands.len();
+                        if let StreamToken::Name(name) = &operands[n - 2] {
                             gs.font_name = name.clone();
                         }
-                        let sz = as_num(&operands[1]).abs();
+                        let sz = as_num(&operands[n - 1]).abs();
                         gs.font_size = if sz > 1e-4 { sz } else { 1.0 };
                     }
                     "Tr" if !operands.is_empty() => {
-                        gs.render_mode = (as_num(&operands[0]).round() as i32).clamp(0, 7) as u8;
+                        let n = operands.len();
+                        gs.render_mode = (as_num(&operands[n - 1]).round() as i32).clamp(0, 7) as u8;
                     }
-                    "Tc" if !operands.is_empty() => gs.char_spacing = as_num(&operands[0]),
-                    "Tw" if !operands.is_empty() => gs.word_spacing = as_num(&operands[0]),
-                    "Tz" if !operands.is_empty() => gs.horiz_scale = as_num(&operands[0]),
-                    "TL" if !operands.is_empty() => gs.leading = as_num(&operands[0]),
-                    "Ts" if !operands.is_empty() => gs.text_rise = as_num(&operands[0]),
+                    "Tc" if !operands.is_empty() => {
+                        let n = operands.len();
+                        gs.char_spacing = as_num(&operands[n - 1]);
+                    }
+                    "Tw" if !operands.is_empty() => {
+                        let n = operands.len();
+                        gs.word_spacing = as_num(&operands[n - 1]);
+                    }
+                    "Tz" if !operands.is_empty() => {
+                        let n = operands.len();
+                        gs.horiz_scale = as_num(&operands[n - 1]);
+                    }
+                    "TL" if !operands.is_empty() => {
+                        let n = operands.len();
+                        gs.leading = as_num(&operands[n - 1]);
+                    }
+                    "Ts" if !operands.is_empty() => {
+                        let n = operands.len();
+                        gs.text_rise = as_num(&operands[n - 1]);
+                    }
                     "Tm" if operands.len() >= 6 => {
                         let m = pop_matrix(&operands);
                         text_matrix = m;
                         line_matrix = m;
                     }
                     "Td" if operands.len() >= 2 => {
-                        let tx = as_num(&operands[0]);
-                        let ty = as_num(&operands[1]);
+                        let n = operands.len();
+                        let tx = as_num(&operands[n - 2]);
+                        let ty = as_num(&operands[n - 1]);
                         line_matrix = mul_matrix([1.0, 0.0, 0.0, 1.0, tx, ty], line_matrix);
                         text_matrix = line_matrix;
                     }
                     "TD" if operands.len() >= 2 => {
-                        let tx = as_num(&operands[0]);
-                        let ty = as_num(&operands[1]);
+                        let n = operands.len();
+                        let tx = as_num(&operands[n - 2]);
+                        let ty = as_num(&operands[n - 1]);
                         gs.leading = -ty;
                         line_matrix = mul_matrix([1.0, 0.0, 0.0, 1.0, tx, ty], line_matrix);
                         text_matrix = line_matrix;
@@ -408,8 +468,9 @@ fn interpret_content_stream(
                     }
                     "Tj" | "'" | "\"" => {
                         if op == "\"" && operands.len() >= 3 {
-                            gs.word_spacing = as_num(&operands[0]);
-                            gs.char_spacing = as_num(&operands[1]);
+                            let n = operands.len();
+                            gs.word_spacing = as_num(&operands[n - 3]);
+                            gs.char_spacing = as_num(&operands[n - 2]);
                         }
                         if op == "'" || op == "\"" {
                             line_matrix = mul_matrix([1.0, 0.0, 0.0, 1.0, 0.0, -gs.leading], line_matrix);
@@ -452,15 +513,44 @@ fn interpret_content_stream(
                             }
                         }
                     }
-                    "m" | "l" if operands.len() >= 2 => {
-                        let (x, y) = transform_point(gs.ctm, as_num(&operands[0]), as_num(&operands[1]));
-                        path_points.push((x, page_height - y));
+                    "m" if operands.len() >= 2 => {
+                        let n = operands.len();
+                        let (x, y) = transform_point(gs.ctm, as_num(&operands[n - 2]), as_num(&operands[n - 1]));
+                        let pt = (x, page_height - y);
+                        cur_pt = Some(pt);
+                        subpath_start = Some(pt);
+                    }
+                    "l" if operands.len() >= 2 => {
+                        let n = operands.len();
+                        let (x, y) = transform_point(gs.ctm, as_num(&operands[n - 2]), as_num(&operands[n - 1]));
+                        let pt = (x, page_height - y);
+                        if let Some(prev) = cur_pt {
+                            path_segments.push((prev, pt));
+                        }
+                        cur_pt = Some(pt);
+                        if subpath_start.is_none() {
+                            subpath_start = Some(pt);
+                        }
+                    }
+                    "c" | "v" | "y" if operands.len() >= 4 => {
+                        let n = operands.len();
+                        let (x, y) = transform_point(gs.ctm, as_num(&operands[n - 2]), as_num(&operands[n - 1]));
+                        cur_pt = Some((x, page_height - y));
+                    }
+                    "h" => {
+                        if let (Some(prev), Some(start)) = (cur_pt, subpath_start) {
+                            if prev != start {
+                                path_segments.push((prev, start));
+                            }
+                            cur_pt = Some(start);
+                        }
                     }
                     "re" if operands.len() >= 4 => {
-                        let rx = as_num(&operands[0]);
-                        let ry = as_num(&operands[1]);
-                        let rw = as_num(&operands[2]);
-                        let rh = as_num(&operands[3]);
+                        let n = operands.len();
+                        let rx = as_num(&operands[n - 4]);
+                        let ry = as_num(&operands[n - 3]);
+                        let rw = as_num(&operands[n - 2]);
+                        let rh = as_num(&operands[n - 1]);
                         let (p0x, p0y) = transform_point(gs.ctm, rx, ry);
                         let (p1x, p1y) = transform_point(gs.ctm, rx + rw, ry + rh);
                         let rect = Rect::new(
@@ -474,10 +564,17 @@ fn interpret_content_stream(
                     "S" | "s" | "f" | "F" | "f*" | "B" | "b" | "B*" | "b*" => {
                         let is_stroked = matches!(op.as_str(), "S" | "s" | "B" | "b" | "B*" | "b*");
                         let is_filled = matches!(op.as_str(), "f" | "F" | "f*" | "B" | "b" | "B*" | "b*");
-                        for pair in path_points.windows(2) {
+                        if matches!(op.as_str(), "s" | "b" | "b*") {
+                            if let (Some(prev), Some(start)) = (cur_pt, subpath_start) {
+                                if prev != start {
+                                    path_segments.push((prev, start));
+                                }
+                            }
+                        }
+                        for (p0, p1) in path_segments.drain(..) {
                             page.segments.push(VectorSegment {
-                                p0: pair[0],
-                                p1: pair[1],
+                                p0,
+                                p1,
                                 stroke_width: gs.line_width,
                                 is_stroked,
                                 is_filled,
@@ -527,14 +624,18 @@ fn interpret_content_stream(
                                 fill_rgb: if is_filled { Some(gs.fill_rgb) } else { None },
                             });
                         }
-                        path_points.clear();
+                        cur_pt = None;
+                        subpath_start = None;
                     }
                     "n" => {
-                        path_points.clear();
+                        path_segments.clear();
                         path_rects.clear();
+                        cur_pt = None;
+                        subpath_start = None;
                     }
                     "Do" if !operands.is_empty() => {
-                        if let StreamToken::Name(xname) = &operands[0] {
+                        let n = operands.len();
+                        if let StreamToken::Name(xname) = &operands[n - 1] {
                             handle_xobject(
                                 doc,
                                 resources,
@@ -567,23 +668,13 @@ fn emit_text_bytes(
     out: &mut Vec<TextSpan>,
 ) {
     let font = fonts.get(&gs.font_name).cloned().unwrap_or_default();
-    let (decoded, glyph_units) = font.decode_bytes(bytes);
+    let (decoded, glyph_units, char_count, space_count) = font.decode_bytes_with_stats(bytes);
 
     let combined = mul_matrix(*text_matrix, gs.ctm);
     let raw_scale_x = combined[0].hypot(combined[1]);
     let scale_x = if raw_scale_x > 1e-3 { raw_scale_x } else { 1.0 };
     let effective_size = (gs.font_size * scale_x).max(1.0);
 
-    let char_count = if font.is_two_byte {
-        bytes.len() / 2
-    } else {
-        bytes.len()
-    };
-    let space_count = if font.is_two_byte {
-        0
-    } else {
-        bytes.iter().filter(|&&b| b == b' ').count()
-    };
     let advance = ((glyph_units / 1000.0) * gs.font_size
         + (char_count as f32 * gs.char_spacing)
         + (space_count as f32 * gs.word_spacing))
@@ -603,16 +694,31 @@ fn emit_text_bytes(
         return;
     }
 
+    let end_combined = mul_matrix(*text_matrix, gs.ctm);
     let rotation_deg = combined[1].atan2(combined[0]).to_degrees();
     let x0 = combined[4];
     let baseline_y = page_height - combined[5];
-    let x1 = x0 + advance * scale_x;
-    let y0 = baseline_y - effective_size * 0.85;
-    let y1 = baseline_y + effective_size * 0.2;
+    let end_x = end_combined[4];
+    let end_y = page_height - end_combined[5];
+    let bbox = if (end_y - baseline_y).abs() < 1.0 {
+        let bx1 = end_x.max(x0).max(x0.min(end_x) + 1.0);
+        let bx0 = x0.min(end_x);
+        let y0 = baseline_y - effective_size * 0.85;
+        let y1 = baseline_y + effective_size * 0.2;
+        Rect::new(bx0, y0, bx1, y1)
+    } else {
+        let pad = effective_size * 0.5;
+        Rect::new(
+            x0.min(end_x) - pad,
+            baseline_y.min(end_y) - pad,
+            x0.max(end_x) + pad,
+            baseline_y.max(end_y) + pad,
+        )
+    };
 
     out.push(TextSpan {
         text: decoded,
-        bbox: Rect::new(x0.min(x1), y0.min(y1), x0.max(x1).max(x0.min(x1) + 1.0), y0.max(y1)),
+        bbox,
         origin: (x0, baseline_y),
         font_name: font.base_font,
         font_size: effective_size,
@@ -669,15 +775,23 @@ fn handle_xobject(
             let width = dict.get("Width").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
             let height = dict.get("Height").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
             let bpc = dict.get("BitsPerComponent").and_then(|v| v.as_i64()).unwrap_or(8) as u8;
-            let color_space = dict
-                .get("ColorSpace")
-                .and_then(|v| v.as_name())
-                .unwrap_or("DeviceRGB")
-                .to_string();
-            let filter = dict
-                .get("Filter")
-                .and_then(|v| v.as_name())
-                .map(ToString::to_string);
+            let color_space = match dict.get("ColorSpace") {
+                Some(PdfObject::Name(n)) => n.clone(),
+                Some(PdfObject::Array(arr)) => arr
+                    .first()
+                    .and_then(|v| v.as_name())
+                    .unwrap_or("DeviceRGB")
+                    .to_string(),
+                _ => "DeviceRGB".to_string(),
+            };
+            let filter = match dict.get("Filter") {
+                Some(PdfObject::Name(n)) => Some(n.clone()),
+                Some(PdfObject::Array(arr)) => arr
+                    .first()
+                    .and_then(|v| v.as_name())
+                    .map(ToString::to_string),
+                _ => None,
+            };
             page.images.push(RawImagePlacement {
                 bbox,
                 width,
@@ -713,7 +827,7 @@ fn handle_xobject(
                 .and_then(|o| doc.resolve(o))
                 .and_then(|o| o.as_dict())
             {
-                merge_resource_dicts(&mut form_resources, fres);
+                merge_resource_dicts(doc, &mut form_resources, fres);
             }
 
             let mut form_fonts = parent_fonts.clone();
@@ -896,7 +1010,10 @@ fn tokenize_content_stream(data: &[u8]) -> Vec<StreamToken> {
                 }
                 tokens.push(StreamToken::String(s));
             }
-            b'<' if data.get(i + 1) != Some(&b'<') => {
+            b'<' if data.get(i + 1) == Some(&b'<') => {
+                skip_inline_dict(data, &mut i);
+            }
+            b'<' => {
                 i += 1;
                 let mut nibbles = Vec::new();
                 while i < data.len() && data[i] != b'>' {
@@ -939,11 +1056,27 @@ fn tokenize_content_stream(data: &[u8]) -> Vec<StreamToken> {
             }
             b'/' => {
                 i += 1;
-                let start = i;
-                while i < data.len() && !data[i].is_ascii_whitespace() && !matches!(data[i], b'/' | b'[' | b']' | b'(' | b'<') {
+                let mut name = String::new();
+                while i < data.len()
+                    && !data[i].is_ascii_whitespace()
+                    && !matches!(
+                        data[i],
+                        b'/' | b'[' | b']' | b'(' | b')' | b'<' | b'>' | b'{' | b'}' | b'%'
+                    )
+                {
+                    if data[i] == b'#' && i + 2 < data.len() {
+                        if let Ok(s) = std::str::from_utf8(&data[i + 1..i + 3]) {
+                            if let Ok(v) = u8::from_str_radix(s, 16) {
+                                name.push(v as char);
+                                i += 3;
+                                continue;
+                            }
+                        }
+                    }
+                    name.push(data[i] as char);
                     i += 1;
                 }
-                tokens.push(StreamToken::Name(String::from_utf8_lossy(&data[start..i]).into_owned()));
+                tokens.push(StreamToken::Name(name));
             }
             b'+' | b'-' | b'.' | b'0'..=b'9' => {
                 let start = i;
@@ -959,7 +1092,13 @@ fn tokenize_content_stream(data: &[u8]) -> Vec<StreamToken> {
             }
             _ => {
                 let start = i;
-                while i < data.len() && !data[i].is_ascii_whitespace() && !matches!(data[i], b'(' | b'<' | b'[' | b'/' | b']') {
+                while i < data.len()
+                    && !data[i].is_ascii_whitespace()
+                    && !matches!(
+                        data[i],
+                        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'/' | b'{' | b'}' | b'%'
+                    )
+                {
                     i += 1;
                 }
                 let op = String::from_utf8_lossy(&data[start..i]).into_owned();
@@ -975,6 +1114,43 @@ fn tokenize_content_stream(data: &[u8]) -> Vec<StreamToken> {
         }
     }
     tokens
+}
+
+fn skip_inline_dict(data: &[u8], cursor: &mut usize) {
+    let mut i = *cursor + 2;
+    let mut dict_depth = 1usize;
+    while i < data.len() && dict_depth > 0 {
+        match data[i] {
+            b'(' => {
+                i += 1;
+                let mut str_depth = 1usize;
+                while i < data.len() && str_depth > 0 {
+                    match data[i] {
+                        b'\\' => i = (i + 2).min(data.len()),
+                        b'(' => {
+                            str_depth += 1;
+                            i += 1;
+                        }
+                        b')' => {
+                            str_depth -= 1;
+                            i += 1;
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+            b'<' if data.get(i + 1) == Some(&b'<') => {
+                dict_depth += 1;
+                i += 2;
+            }
+            b'>' if data.get(i + 1) == Some(&b'>') => {
+                dict_depth -= 1;
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    *cursor = i;
 }
 
 fn skip_inline_image(data: &[u8], cursor: &mut usize) -> bool {
