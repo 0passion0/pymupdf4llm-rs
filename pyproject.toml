@@ -25,6 +25,11 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: Markdown",
 ]
 
+[project.urls]
+Homepage = "https://github.com/0passion0/pymupdf4llm-rs"
+Repository = "https://github.com/0passion0/pymupdf4llm-rs"
+Issues = "https://github.com/0passion0/pymupdf4llm-rs/issues"
+
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
@@ -33,3 +38,17 @@ features = ["extension-module"]
 python-source = "python"
 module-name = "pymupdf4llm_rs._native"
 strip = true
+exclude = [
+    "node_modules/**",
+    "dist/**",
+    "web/**",
+    "server.ts",
+    "package.json",
+    "bun.lock*",
+    "tsconfig.json",
+    "vite.config.ts",
+    "index.html",
+    "metadata.json",
+    ".playwright-cli/**",
+    ".aistudio/**",
+]

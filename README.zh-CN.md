@@ -81,9 +81,17 @@ let output = PdfEngine::global()
     .await?;
 ```
 
-### Python 包调用（PyO3 + `maturin`，实例资源复用与释放 GIL）
+### Python 包安装与调用（支持直接 `pip install` GitHub 仓库）
 
-构建并安装本地 Python 扩展包（支持 `Python >= 3.9`、`abi3` 稳定 ABI，无需 C/C++ 运行时依赖）：
+其他 Python（`>= 3.9`）项目可直接通过 `pip` 安装使用（若部署环境无 Rust 编译器，可在 GitHub Actions 发布 Tag 后直接安装 Release 预编译 `.whl` 二进制包）：
+
+```bash
+pip install git+https://github.com/0passion0/pymupdf4llm-rs.git
+# 或写入 requirements.txt / pyproject.toml：
+# pymupdf4llm-rs @ git+https://github.com/0passion0/pymupdf4llm-rs.git@main
+```
+
+本地源码开发测试：
 
 ```bash
 pip install maturin pytest

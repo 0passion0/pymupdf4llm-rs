@@ -81,9 +81,17 @@ let output = PdfEngine::global()
     .await?;
 ```
 
-### Python Package (PyO3 + `maturin`, Reusable Class & GIL-Released)
+### Python Package (`pip install` directly from GitHub)
 
-Build and install locally into your Python environment (`Python >= 3.9`, `abi3`):
+Install directly into any Python (`>= 3.9`) project via `pip` (requires Rust toolchain `rustc`/`cargo` on the build host, or download prebuilt `.whl` files from GitHub Releases with zero Rust toolchain):
+
+```bash
+pip install git+https://github.com/0passion0/pymupdf4llm-rs.git
+# Or pin in requirements.txt:
+# pymupdf4llm-rs @ git+https://github.com/0passion0/pymupdf4llm-rs.git@main
+```
+
+For local extension development:
 
 ```bash
 pip install maturin pytest

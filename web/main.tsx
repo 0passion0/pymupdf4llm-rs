@@ -63,10 +63,10 @@ let output = PdfEngine::global()
 
           <div>
             <h2 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
-              Build &amp; Test Commands
+              Install &amp; Test Commands
             </h2>
             <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-100">
-{`maturin develop --release && pytest -v tests/test_python_api.py
+{`pip install git+https://github.com/0passion0/pymupdf4llm-rs.git
 cargo test --features "async,cli,images"`}
             </pre>
           </div>
