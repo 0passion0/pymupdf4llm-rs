@@ -1,0 +1,6 @@
+{
+  "name": "pymupdf4llm-rs",
+  "description": "Pure-Rust PDF-to-Markdown toolkit with 100% pymupdf4llm parity, async high-concurrency execution, and live browser compatibility workbench.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

@@ -1,0 +1,36 @@
+[package]
+name = "pymupdf4llm-rs"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.78"
+license = "Apache-2.0 OR MIT"
+description = "100% pure-Rust implementation of pymupdf4llm for LLM/RAG PDF-to-Markdown extraction with Tokio + Rayon high-concurrency async support."
+keywords = ["pdf", "markdown", "llm", "rag", "pymupdf4llm"]
+categories = ["parsing", "text-processing", "asynchronous"]
+
+[features]
+default = ["async", "cli", "images"]
+async = ["dep:tokio", "dep:futures"]
+cli = ["dep:clap", "async"]
+images = ["dep:image"]
+
+[dependencies]
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+rayon = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+base64 = "0.22"
+dashmap = "6.1"
+parking_lot = "0.12"
+unicode-normalization = "0.1"
+regex = "1.11"
+tokio = { version = "1.43", features = ["rt-multi-thread", "sync", "fs", "io-util", "macros"], optional = true }
+futures = { version = "0.3", optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"], optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
+
+[[bin]]
+name = "pymupdf4llm"
+path = "src/bin/pymupdf4llm.rs"
+required-features = ["cli"]
