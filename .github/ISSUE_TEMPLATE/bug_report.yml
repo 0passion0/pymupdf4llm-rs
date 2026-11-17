@@ -1,0 +1,47 @@
+name: Bug Report / 缺陷反馈
+description: Report a PDF parsing, Markdown formatting, or mojibake hygiene issue / 提交 PDF 解析、排版或乱码清洗缺陷
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Both **English** and **简体中文** descriptions are welcome.  
+        感谢您的反馈！支持使用**英文**或**简体中文**填写以下信息。
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component / 受影响模块
+      options:
+        - Rust Crate (`pymupdf4llm-rs`)
+        - Web Workbench (`src/engine` / UI)
+        - Both / 双端均复现
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Issue Description / 问题描述
+      description: Describe expected PyMuPDF4LLM output vs. actual output / 描述期望的 Markdown 输出与实际差异
+      placeholder: e.g. Multi-table page merges two tables, or Type0 CJK characters render as mojibake...
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options & Environment / 运行参数与环境
+      description: Table strategy, header mode, hygiene flags, Rust/Node version / 表格策略、标题模式、清洗开关与工具链版本
+      placeholder: |
+        - table_strategy: lines_strict
+        - hdr_info: IdentifyHeaders
+        - hygiene: clean_mojibake=true, dehyphenate=true, dedup_running_headers=false
+        - rustc / node version:
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal PDF Sample or Steps / 最小复现步骤或 PDF 特征
+      description: Please share PDF producer, font encoding (Type0/TrueType/Type1), or sanitized snippet / 请说明 PDF 生成器、字体编码或脱敏样本

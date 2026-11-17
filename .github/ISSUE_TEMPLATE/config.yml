@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability / 安全漏洞私密报告
+    url: ../../security/advisories/new
+    about: Report PDF parser DoS, decompression bombs, or path traversal privately / 私密反馈解析器崩溃、解压炸弹或路径安全隐患

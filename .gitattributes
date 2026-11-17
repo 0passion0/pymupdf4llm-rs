@@ -1,0 +1,27 @@
+# Normalize text line endings to LF across macOS, Linux, and Windows contributors
+* text=auto eol=lf
+
+# Rust & Web Sources
+*.rs text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+
+# Binary Formats
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.gz binary
+*.tar binary

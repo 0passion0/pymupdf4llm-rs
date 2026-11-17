@@ -1,0 +1,76 @@
+name: CI (Rust Crate + Web Workbench)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-crate:
+    name: Pure-Rust Crate (pymupdf4llm-rs)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust/pymupdf4llm-rs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry & build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/pymupdf4llm-rs/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/pymupdf4llm-rs/Cargo.toml') }}
+
+      - name: Check formatting (rustfmt)
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy lints
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run unit & compatibility tests
+        run: cargo test --all-features
+
+      - name: Check default & no-default-features compilation
+        run: |
+          cargo check --no-default-features
+          cargo check --no-default-features --features async
+
+  web-workbench:
+    name: TypeScript Engine & Web Workbench
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run lint
+
+      - name: Run TypeScript PDF engine unit tests
+        run: npx tsx --test src/engine/pdfEngine.test.ts
+
+      - name: Build production Vite bundle
+        run: npm run build

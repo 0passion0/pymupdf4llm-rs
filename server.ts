@@ -21,6 +21,7 @@ function collectCrateFiles(dir: string, baseDir = dir): CrateFile[] {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   const files: CrateFile[] = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.name === 'target' || entry.name === '.git') continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       files.push(...collectCrateFiles(full, baseDir));

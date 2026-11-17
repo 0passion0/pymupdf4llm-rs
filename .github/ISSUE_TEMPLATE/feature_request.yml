@@ -1,0 +1,24 @@
+name: Feature or Parity Request / 功能与兼容需求
+description: Request PyMuPDF4LLM API parity, PDF stream filter, or performance optimization / 提交新特性、PDF 编码兼容或性能优化建议
+title: "[Feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Both **English** and **简体中文** proposals are welcome.  
+        欢迎使用**英文**或**简体中文**提交功能建议与 `pymupdf4llm` 兼容性需求。
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature Summary / 需求概述
+      description: What capability or PyMuPDF4LLM parameter would you like added? / 希望增加什么能力或兼容参数？
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Use Case & Algorithms / 使用场景与实现思路
+      description: Explain the PDF structure, encoding, or concurrency bottleneck / 描述对应 PDF 结构特征、编码规范或并发瓶颈
