@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use futures::stream::{self, Stream};
+use futures::stream::{self, Stream, StreamExt};
 use tokio::sync::Semaphore;
 
 use crate::config::ToMarkdownOptions;
@@ -305,8 +305,8 @@ pub fn to_markdown_stream(
         Ok::<_, PdfError>(stream::iter(futs).buffered(opts_arc.concurrency.max_page_concurrency))
     })
     .flat_map(|res| match res {
-        Ok(s) => futures::stream::Either::Left(s),
-        Err(e) => futures::stream::Either::Right(stream::once(async move { Err(e) })),
+        Ok(s) => futures::future::Either::Left(s),
+        Err(e) => futures::future::Either::Right(stream::once(async move { Err(e) })),
     })
 }
 

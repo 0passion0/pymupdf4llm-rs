@@ -138,7 +138,7 @@ impl PdfDocument {
         &self.toc
     }
 
-    pub fn resolve(&self, obj: &objects::PdfObject) -> Option<&objects::PdfObject> {
+    pub fn resolve<'a>(&'a self, obj: &'a objects::PdfObject) -> Option<&'a objects::PdfObject> {
         match obj {
             objects::PdfObject::Reference(num, _) => self.objects.get(num),
             other => Some(other),

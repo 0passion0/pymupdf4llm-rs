@@ -34,6 +34,7 @@ Issues = "https://github.com/0passion0/pymupdf4llm-rs/issues"
 dev = ["pytest>=8.0"]
 
 [tool.maturin]
+no-default-features = true
 features = ["extension-module"]
 python-source = "python"
 module-name = "pymupdf4llm_rs._native"

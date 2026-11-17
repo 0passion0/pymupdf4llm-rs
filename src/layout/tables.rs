@@ -212,8 +212,11 @@ fn detect_text_aligned_tables(spans: &[TextSpan]) -> Vec<DetectedTable> {
     let mut run_start = None;
     let mut row_cells: Vec<Vec<(f32, f32, String)>> = Vec::new();
 
-    for (idx, row) in rows.iter_mut().enumerate() {
+    for row in &mut rows {
         row.sort_by(|a, b| a.bbox.x0.partial_cmp(&b.bbox.x0).unwrap());
+    }
+
+    for (idx, row) in rows.iter().enumerate() {
         let mut cells: Vec<(f32, f32, String)> = Vec::new();
         for s in row.iter() {
             if let Some(last) = cells.last_mut() {
