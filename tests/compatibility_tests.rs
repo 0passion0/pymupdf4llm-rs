@@ -229,3 +229,22 @@ async fn test_async_concurrent_execution() {
         .unwrap();
     assert!(global_out.as_text().unwrap().contains("# 1. Rust PDF Architecture"));
 }
+
+#[test]
+fn test_closely_spaced_spans_total_order_never_panics() {
+    // Regression test for Rust smallsort total-order panic when y-coords chain across an epsilon band
+    let mut stream = b"BT\n".to_vec();
+    for i in 0..40 {
+        let y = 720.0 - (i as f32) * 2.2;
+        let x = if i % 2 == 0 { 220.0 } else { 72.0 };
+        let line = format!("/F1 10 Tf 1 0 0 1 {x:.1} {y:.1} Tm (Span{i}) Tj\n");
+        stream.extend_from_slice(line.as_bytes());
+    }
+    stream.extend_from_slice(b"ET\n");
+    let pdf = assemble_pdf(vec![(stream, None)], false);
+    let md = to_markdown(pdf.as_slice(), ToMarkdownOptions::default())
+        .unwrap()
+        .into_text();
+    assert!(md.contains("Span0"));
+    assert!(md.contains("Span39"));
+}

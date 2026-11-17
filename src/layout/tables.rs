@@ -142,13 +142,23 @@ fn detect_line_tables(
     }
 
     detected.sort_by(|a, b| {
-        let dy = (a.bbox.y0 - b.bbox.y0).abs();
-        if dy <= 10.0 {
-            a.bbox.x0.partial_cmp(&b.bbox.x0).unwrap()
-        } else {
-            a.bbox.y0.partial_cmp(&b.bbox.y0).unwrap()
-        }
+        a.bbox
+            .y0
+            .total_cmp(&b.bbox.y0)
+            .then_with(|| a.bbox.x0.total_cmp(&b.bbox.x0))
     });
+    let mut start = 0;
+    while start < detected.len() {
+        let ref_y = detected[start].bbox.y0;
+        let mut end = start + 1;
+        while end < detected.len() && (detected[end].bbox.y0 - ref_y).abs() <= 10.0 {
+            end += 1;
+        }
+        if end - start > 1 {
+            detected[start..end].sort_by(|a, b| a.bbox.x0.total_cmp(&b.bbox.x0));
+        }
+        start = end;
+    }
 
     detected
 }
@@ -194,7 +204,12 @@ fn detect_text_aligned_tables(spans: &[TextSpan]) -> Vec<DetectedTable> {
         return Vec::new();
     }
     let mut sorted = spans.to_vec();
-    sorted.sort_by(|a, b| a.bbox.y0.partial_cmp(&b.bbox.y0).unwrap());
+    sorted.sort_by(|a, b| {
+        a.bbox
+            .y0
+            .total_cmp(&b.bbox.y0)
+            .then_with(|| a.bbox.x0.total_cmp(&b.bbox.x0))
+    });
 
     let mut rows: Vec<Vec<TextSpan>> = Vec::new();
     for s in sorted {
@@ -213,7 +228,7 @@ fn detect_text_aligned_tables(spans: &[TextSpan]) -> Vec<DetectedTable> {
     let mut row_cells: Vec<Vec<(f32, f32, String)>> = Vec::new();
 
     for row in &mut rows {
-        row.sort_by(|a, b| a.bbox.x0.partial_cmp(&b.bbox.x0).unwrap());
+        row.sort_by(|a, b| a.bbox.x0.total_cmp(&b.bbox.x0));
     }
 
     for (idx, row) in rows.iter().enumerate() {
@@ -274,7 +289,7 @@ fn finalize_text_table(
             }
         }
     }
-    col_starts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    col_starts.sort_by(f32::total_cmp);
     let num_cols = col_starts.len();
     if num_cols < 2 {
         return None;
@@ -286,7 +301,7 @@ fn finalize_text_table(
             let c_idx = col_starts
                 .iter()
                 .enumerate()
-                .min_by(|(_, a), (_, b)| (*a - cell.0).abs().partial_cmp(&(*b - cell.0).abs()).unwrap())
+                .min_by(|(_, a), (_, b)| (*a - cell.0).abs().total_cmp(&(*b - cell.0).abs()))
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             if !grid[r_idx][c_idx].is_empty() {
@@ -296,7 +311,7 @@ fn finalize_text_table(
         }
     }
 
-    let mut bbox = raw_rows[0][0].bbox;
+    let mut bbox = raw_rows.first()?.first()?.bbox;
     for r in raw_rows {
         for s in r {
             bbox = bbox.union(&s.bbox);
@@ -348,13 +363,25 @@ fn populate_grid_indexed(
                 .filter(|s| cell_rect.contains_point(s.bbox.center_x(), s.bbox.center_y()))
                 .collect();
             cell_spans.sort_by(|a, b| {
-                let dy = (a.bbox.y0 - b.bbox.y0).abs();
-                if dy <= 3.0 {
-                    a.bbox.x0.partial_cmp(&b.bbox.x0).unwrap()
-                } else {
-                    a.bbox.y0.partial_cmp(&b.bbox.y0).unwrap()
-                }
+                a.bbox
+                    .y0
+                    .total_cmp(&b.bbox.y0)
+                    .then_with(|| a.bbox.x0.total_cmp(&b.bbox.x0))
             });
+            let mut row_start = 0;
+            while row_start < cell_spans.len() {
+                let ref_y = cell_spans[row_start].bbox.y0;
+                let mut row_end = row_start + 1;
+                while row_end < cell_spans.len()
+                    && (cell_spans[row_end].bbox.y0 - ref_y).abs() <= 3.0
+                {
+                    row_end += 1;
+                }
+                if row_end - row_start > 1 {
+                    cell_spans[row_start..row_end].sort_by(|a, b| a.bbox.x0.total_cmp(&b.bbox.x0));
+                }
+                row_start = row_end;
+            }
             let text = cell_spans
                 .iter()
                 .map(|s| s.text.trim())
@@ -406,7 +433,7 @@ pub fn format_gfm_table(grid: &[Vec<String>]) -> String {
 }
 
 fn cluster_coords(mut vals: Vec<f32>, tol: f32) -> Vec<f32> {
-    vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    vals.sort_by(f32::total_cmp);
     let mut clustered: Vec<f32> = Vec::new();
     for v in vals {
         if let Some(last) = clustered.last_mut() {

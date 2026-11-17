@@ -121,7 +121,7 @@ pub fn build_page_chunk(
         let yb = match b {
             FlowBlock::Table { y, .. } | FlowBlock::Line { y, .. } | FlowBlock::Image { y, .. } => *y,
         };
-        ya.partial_cmp(&yb).unwrap()
+        ya.total_cmp(&yb)
     });
 
     for mb in media_blocks {

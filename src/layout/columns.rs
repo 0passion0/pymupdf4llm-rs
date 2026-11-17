@@ -14,17 +14,35 @@ pub fn order_spans_into_lines(spans: &[TextSpan], bounds: Rect) -> Vec<TextLine>
     group_spans_into_lines(&ordered_spans)
 }
 
+fn sort_spans_top_left(rest: &mut [TextSpan], row_tol: f32) {
+    if rest.len() <= 1 {
+        return;
+    }
+    rest.sort_by(|a, b| {
+        a.bbox
+            .center_y()
+            .total_cmp(&b.bbox.center_y())
+            .then_with(|| a.bbox.x0.total_cmp(&b.bbox.x0))
+    });
+
+    let mut start = 0;
+    while start < rest.len() {
+        let ref_y = rest[start].bbox.center_y();
+        let mut end = start + 1;
+        while end < rest.len() && (rest[end].bbox.center_y() - ref_y).abs() <= row_tol {
+            end += 1;
+        }
+        if end - start > 1 {
+            rest[start..end].sort_by(|a, b| a.bbox.x0.total_cmp(&b.bbox.x0));
+        }
+        start = end;
+    }
+}
+
 fn xy_cut_recursive(spans: &[TextSpan], bounds: Rect, depth: usize, out: &mut Vec<TextSpan>) {
     if spans.len() <= 1 || depth >= 8 {
         let mut rest = spans.to_vec();
-        rest.sort_by(|a, b| {
-            let dy = (a.bbox.center_y() - b.bbox.center_y()).abs();
-            if dy <= 4.0 {
-                a.bbox.x0.partial_cmp(&b.bbox.x0).unwrap()
-            } else {
-                a.bbox.y0.partial_cmp(&b.bbox.y0).unwrap()
-            }
-        });
+        sort_spans_top_left(&mut rest, 4.0);
         out.extend(rest);
         return;
     }
@@ -75,16 +93,9 @@ fn xy_cut_recursive(spans: &[TextSpan], bounds: Rect, depth: usize, out: &mut Ve
         }
     }
 
-    // Base case: sort top-to-bottom, left-to-right
+    // Base case: sort top-to-bottom, left-to-right with strict total order
     let mut rest = spans.to_vec();
-    rest.sort_by(|a, b| {
-        let dy = (a.bbox.center_y() - b.bbox.center_y()).abs();
-        if dy <= 4.0 {
-            a.bbox.x0.partial_cmp(&b.bbox.x0).unwrap()
-        } else {
-            a.bbox.y0.partial_cmp(&b.bbox.y0).unwrap()
-        }
-    });
+    sort_spans_top_left(&mut rest, 4.0);
     out.extend(rest);
 }
 
@@ -97,7 +108,7 @@ fn find_widest_vertical_gutter(spans: &[TextSpan], bounds: Rect) -> Option<f32> 
     if x_intervals.len() < 2 {
         return None;
     }
-    x_intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    x_intervals.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
 
     let mut merged: Vec<(f32, f32)> = Vec::new();
     for (a, b) in x_intervals {
@@ -131,7 +142,7 @@ fn find_widest_horizontal_gutter(spans: &[TextSpan], bounds: Rect) -> Option<f32
     if y_intervals.len() < 2 {
         return None;
     }
-    y_intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    y_intervals.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
 
     let mut merged: Vec<(f32, f32)> = Vec::new();
     for (a, b) in y_intervals {
@@ -162,8 +173,10 @@ fn group_spans_into_lines(spans: &[TextSpan]) -> Vec<TextLine> {
         if let Some(last) = lines.last_mut() {
             let ref_y = last[0].origin.1;
             let same_baseline = (span.origin.1 - ref_y).abs() <= (last[0].font_size * 0.45).max(3.5);
-            let same_column = (span.bbox.x0 - last.last().unwrap().bbox.x1).abs() < 120.0
-                || span.bbox.x0 >= last.last().unwrap().bbox.x0 - 4.0;
+            let same_column = last.last().is_some_and(|prev_span| {
+                (span.bbox.x0 - prev_span.bbox.x1).abs() < 120.0
+                    || span.bbox.x0 >= prev_span.bbox.x0 - 4.0
+            });
             if same_baseline && same_column {
                 last.push(span.clone());
                 continue;
@@ -175,7 +188,7 @@ fn group_spans_into_lines(spans: &[TextSpan]) -> Vec<TextLine> {
     lines
         .into_iter()
         .map(|mut line_spans| {
-            line_spans.sort_by(|a, b| a.bbox.x0.partial_cmp(&b.bbox.x0).unwrap());
+            line_spans.sort_by(|a, b| a.bbox.x0.total_cmp(&b.bbox.x0));
             let mut bbox = line_spans[0].bbox;
             let mut max_font_size = 0.0f32;
             let mut all_bold = true;
