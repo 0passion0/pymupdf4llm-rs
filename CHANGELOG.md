@@ -1,7 +1,7 @@
 # Changelog / 更新日志
 
-All notable changes to `pymupdf4llm-rs` and its interactive workbench are documented in this file.  
-本文档记录 `pymupdf4llm-rs` 纯 Rust 引擎及其交互式工作台的重要版本变更。
+All notable changes to `pymupdf4llm-rs` are documented in this file.  
+本文档记录 `pymupdf4llm-rs` 纯 Rust 核心库的重要版本变更。
 
 ---
 
@@ -11,7 +11,7 @@ All notable changes to `pymupdf4llm-rs` and its interactive workbench are docume
 - **PDF Format & Encoding Compatibility**:
   - Added `/Pages` tree inheritance for `/MediaBox`, `/CropBox`, `/Rotate`, and `/Resources`.
   - Added `/Subtype /Form` XObject recursive stream execution with `/Matrix` & font stack isolation.
-  - Added pure-Rust & TypeScript `LZWDecode` decompression (9–12 bit variable codes with `EarlyChange`).
+  - Added pure-Rust `LZWDecode` decompression (9–12 bit variable codes with `EarlyChange`).
   - Added `Type0`/CID `/W` width parsing, array-form `beginbfrange` `ToUnicode` CMap decoding, `MacRomanEncoding`, and 70+ Adobe Glyph names.
   - Added `/Rotate` (0°/90°/180°/270°) page coordinate normalization and `DashMap` lock-free font caching.
 - **Text Hygiene & Noise Cleanup**:
@@ -21,14 +21,14 @@ All notable changes to `pymupdf4llm-rs` and its interactive workbench are docume
 - **Algorithms & Performance**:
   - Added 2D `SpatialGrid` for $O(1)$ average-case link attachment and table cell span assignment.
   - Added `UnionFind` (DSU) connected components to isolate multiple independent tables per page and cluster vector graphics.
-- **Workbench & GitHub OSS Setup**:
-  - Added the `Noisy CJK, Form XObject & Multi-Table PDF` benchmark preset, sidebar hygiene controls, `Text Hygiene & Diagnostics` table, and bilingual GitHub repository documentation.
+- **Repository Structure**:
+  - Promoted `pymupdf4llm-rs` to repository root as a standalone pure-Rust library + CLI crate.
 
 ### 简体中文
 - **PDF 格式与文字编码兼容性扩展**：
   - 支持 `/Pages` 树向子页面继承 `/MediaBox`、`/CropBox`、`/Rotate` 与 `/Resources`。
   - 支持 `/Subtype /Form` 表单 XObject 递归解释执行及局部变换矩阵与字体栈叠加。
-  - 实现纯 Rust 与 TypeScript 版 `LZWDecode` 解压器（支持 9–12 位可变码长与 `EarlyChange`）。
+  - 实现纯 Rust 版 `LZWDecode` 解压器（支持 9–12 位可变码长与 `EarlyChange`）。
   - 完善 `Type0`/CID `/W` 宽度解析、数组型 `beginbfrange` `ToUnicode` CMap、`MacRomanEncoding` 与 70+ Adobe Glyph 字符名映射。
   - 增加 `/Rotate`（0°/90°/180°/270°）页面旋转坐标归一化与无锁 `DashMap` 字体缓存。
 - **乱码治理与噪声过滤**：
@@ -38,15 +38,15 @@ All notable changes to `pymupdf4llm-rs` and its interactive workbench are docume
 - **空间算法与性能优化**：
   - 引入二维 `SpatialGrid` 空间网格索引，将链接命中与表格单元匹配降至均摊 $O(1)$。
   - 引入并查集 `UnionFind` 连通分量算法，精准分离单页多张独立表格并高效聚类矢量图形。
-- **工作台与开源规范完善**：
-  - 新增第 4 套压测预设 `Noisy CJK, Form XObject & Multi-Table PDF`、侧边栏清洗开关、诊断统计表及中英双语 Git/GitHub 仓库文件。
+- **仓库结构精简**：
+  - 移除前端展示代码，将纯 Rust 工具包与 CLI 主程序置于仓库根目录。
 
 ---
 
 ## [0.1.0] - 2026-11-16
 
 ### English
-- Initial pure-Rust `pymupdf4llm-rs` crate with PDF 1.0–2.0 parser, `FlateDecode`, recursive X-Y Cut multi-column ordering, `IdentifyHeaders` / `TocHeaders`, 4 table strategies, Tokio + Rayon concurrency, CLI binary, and interactive Express/Vite/React workbench.
+- Initial pure-Rust `pymupdf4llm-rs` crate with PDF 1.0–2.0 parser, `FlateDecode`, recursive X-Y Cut multi-column ordering, `IdentifyHeaders` / `TocHeaders`, 4 table strategies, Tokio + Rayon concurrency, and CLI binary.
 
 ### 简体中文
-- 初始版本发布：100% 纯 Rust `pymupdf4llm-rs` 核心库，支持 PDF 1.0–2.0 解析、`FlateDecode`、递归 X-Y Cut 多栏切分、`IdentifyHeaders`/`TocHeaders`、4 种表格策略、Tokio + Rayon 并发调度、CLI 工具以及交互式 Web 工作台。
+- 初始版本发布：100% 纯 Rust `pymupdf4llm-rs` 核心库，支持 PDF 1.0–2.0 解析、`FlateDecode`、递归 X-Y Cut 多栏切分、`IdentifyHeaders`/`TocHeaders`、4 种表格策略、Tokio + Rayon 并发调度与 CLI 工具。

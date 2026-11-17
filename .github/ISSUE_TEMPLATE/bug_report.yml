@@ -12,11 +12,12 @@ body:
   - type: dropdown
     id: component
     attributes:
-      label: Affected Component / 受影响模块
+      label: Affected Module / 受影响模块
       options:
-        - Rust Crate (`pymupdf4llm-rs`)
-        - Web Workbench (`src/engine` / UI)
-        - Both / 双端均复现
+        - PDF Binary / Stream Parser (`src/pdf`)
+        - Layout / Multi-Column / Tables (`src/layout`)
+        - Text Hygiene / Mojibake (`src/text_cleaner.rs`)
+        - Async Engine / CLI (`src/async_engine.rs`, `src/bin`)
     validations:
       required: true
 
@@ -32,13 +33,13 @@ body:
   - type: textarea
     id: options
     attributes:
-      label: Options & Environment / 运行参数与环境
-      description: Table strategy, header mode, hygiene flags, Rust/Node version / 表格策略、标题模式、清洗开关与工具链版本
+      label: Options & Rust Toolchain / 运行参数与环境
+      description: Table strategy, header mode, hygiene flags, rustc version / 表格策略、标题模式、清洗开关与 Rust 版本
       placeholder: |
-        - table_strategy: lines_strict
-        - hdr_info: IdentifyHeaders
+        - table_strategy: TableStrategy::LinesStrict
+        - hdr_info: HeaderMode::IdentifyHeaders
         - hygiene: clean_mojibake=true, dehyphenate=true, dedup_running_headers=false
-        - rustc / node version:
+        - rustc --version:
 
   - type: textarea
     id: reproduction

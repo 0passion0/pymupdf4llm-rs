@@ -1,20 +1,11 @@
-# Node.js & Web Workbench
-node_modules/
-build/
-dist/
-coverage/
-*.local
-
 # Rust / Cargo
-/rust/pymupdf4llm-rs/target/
-target/
+/target/
 **/*.rs.bk
 *.pdb
 
-# Environment & Secrets
+# Environment
 .env
 .env.*
-!.env.example
 
 # Editor & OS Artifacts
 .DS_Store
@@ -23,7 +14,4 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
-
-# Test & Browser Verification Artifacts
-.playwright-cli/
 .aistudio/
