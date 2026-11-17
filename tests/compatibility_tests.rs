@@ -219,4 +219,13 @@ async fn test_async_concurrent_execution() {
     let text = out.as_text().unwrap();
     assert!(text.contains("# 1. Rust PDF Architecture"));
     assert!(text.contains("420 pages/s"));
+
+    let global_out = pymupdf4llm_rs::PdfEngine::global()
+        .extract_bytes_shared(
+            bytes,
+            std::sync::Arc::clone(pymupdf4llm_rs::PdfEngine::default_options()),
+        )
+        .await
+        .unwrap();
+    assert!(global_out.as_text().unwrap().contains("# 1. Rust PDF Architecture"));
 }

@@ -1,7 +1,26 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, OnceLock};
+
+use dashmap::DashMap;
+
 use crate::pdf::objects::PdfObject;
 use crate::pdf::parser::decode_stream_bytes;
 use crate::pdf::PdfDocument;
+
+const MAX_GLOBAL_CMAP_ENTRIES: usize = 512;
+
+fn global_cmap_cache() -> &'static DashMap<(u64, usize), Arc<HashMap<u32, String>>> {
+    static CACHE: OnceLock<DashMap<(u64, usize), Arc<HashMap<u32, String>>>> = OnceLock::new();
+    CACHE.get_or_init(DashMap::new)
+}
+
+fn hash_cmap_bytes(bytes: &[u8]) -> (u64, usize) {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    (hasher.finish(), bytes.len())
+}
 
 #[derive(Debug, Clone)]
 pub struct PdfFont {
@@ -11,9 +30,9 @@ pub struct PdfFont {
     pub is_monospace: bool,
     pub is_two_byte: bool,
     pub is_mac_roman: bool,
-    pub to_unicode: HashMap<u32, String>,
-    pub differences: HashMap<u8, String>,
-    pub widths: HashMap<u32, f32>,
+    pub to_unicode: Arc<HashMap<u32, String>>,
+    pub differences: Arc<HashMap<u8, String>>,
+    pub widths: Arc<HashMap<u32, f32>>,
     pub default_width: f32,
 }
 
@@ -26,9 +45,9 @@ impl Default for PdfFont {
             is_monospace: false,
             is_two_byte: false,
             is_mac_roman: false,
-            to_unicode: HashMap::new(),
-            differences: HashMap::new(),
-            widths: HashMap::new(),
+            to_unicode: Arc::new(HashMap::new()),
+            differences: Arc::new(HashMap::new()),
+            widths: Arc::new(HashMap::new()),
             default_width: 550.0,
         }
     }
@@ -93,14 +112,27 @@ impl PdfFont {
             }
         }
 
-        let mut to_unicode = HashMap::new();
+        let mut to_unicode: Option<Arc<HashMap<u32, String>>> = None;
         if let Some(tu_obj) = dict.get("ToUnicode") {
             if let Some(PdfObject::Stream { dict: sdict, data }) = doc.resolve(tu_obj) {
                 if let Ok(cmap_bytes) = decode_stream_bytes(sdict, data) {
-                    parse_tounicode_cmap(&cmap_bytes, &mut to_unicode);
+                    let key = hash_cmap_bytes(&cmap_bytes);
+                    let cache = global_cmap_cache();
+                    if let Some(hit) = cache.get(&key) {
+                        to_unicode = Some(Arc::clone(hit.value()));
+                    } else {
+                        let mut map = HashMap::new();
+                        parse_tounicode_cmap(&cmap_bytes, &mut map);
+                        let shared = Arc::new(map);
+                        if cache.len() < MAX_GLOBAL_CMAP_ENTRIES {
+                            cache.insert(key, Arc::clone(&shared));
+                        }
+                        to_unicode = Some(shared);
+                    }
                 }
             }
         }
+        let to_unicode = to_unicode.unwrap_or_else(|| Arc::new(HashMap::new()));
 
         let mut differences = HashMap::new();
         if let Some(enc_obj) = dict.get("Encoding") {
@@ -155,8 +187,8 @@ impl PdfFont {
             is_two_byte,
             is_mac_roman,
             to_unicode,
-            differences,
-            widths,
+            differences: Arc::new(differences),
+            widths: Arc::new(widths),
             default_width,
         }
     }

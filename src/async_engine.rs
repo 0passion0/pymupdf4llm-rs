@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use futures::stream::{self, Stream};
 use tokio::sync::Semaphore;
@@ -20,6 +20,103 @@ pub struct BatchItemResult {
     pub path: PathBuf,
     pub output: Result<MarkdownOutput>,
     pub elapsed_ms: f64,
+}
+
+/// Process-wide reusable extraction engine for Web servers (Axum / Actix / Tonic).
+/// Caps total in-flight PDF documents and concurrent page workers globally to avoid
+/// thread exhaustion and OOM spikes under burst HTTP traffic without affecting output quality.
+pub struct PdfEngine {
+    doc_semaphore: Arc<Semaphore>,
+    page_semaphore: Arc<Semaphore>,
+}
+
+impl PdfEngine {
+    pub fn new(max_concurrent_docs: usize, max_concurrent_pages: usize) -> Self {
+        Self {
+            doc_semaphore: Arc::new(Semaphore::new(max_concurrent_docs.max(1))),
+            page_semaphore: Arc::new(Semaphore::new(max_concurrent_pages.max(1))),
+        }
+    }
+
+    pub fn global() -> &'static Arc<Self> {
+        static GLOBAL: OnceLock<Arc<PdfEngine>> = OnceLock::new();
+        GLOBAL.get_or_init(|| {
+            let cpus = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4);
+            Arc::new(Self::new(cpus.max(4), (cpus * 2).max(8)))
+        })
+    }
+
+    pub fn default_options() -> &'static Arc<ToMarkdownOptions> {
+        static DEFAULT: OnceLock<Arc<ToMarkdownOptions>> = OnceLock::new();
+        DEFAULT.get_or_init(|| Arc::new(ToMarkdownOptions::default()))
+    }
+
+    pub async fn extract_bytes(
+        &self,
+        bytes: Vec<u8>,
+        options: ToMarkdownOptions,
+    ) -> Result<MarkdownOutput> {
+        self.extract_bytes_shared(bytes, Arc::new(options)).await
+    }
+
+    pub async fn extract_bytes_shared(
+        &self,
+        bytes: Vec<u8>,
+        options: Arc<ToMarkdownOptions>,
+    ) -> Result<MarkdownOutput> {
+        let _doc_permit = self
+            .doc_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| PdfError::TaskJoin(e.to_string()))?;
+        let doc = tokio::task::spawn_blocking(move || PdfDocument::from_bytes(&bytes))
+            .await
+            .map_err(|e| PdfError::TaskJoin(e.to_string()))??;
+        to_markdown_doc_with_semaphore(Arc::new(doc), options, Arc::clone(&self.page_semaphore))
+            .await
+    }
+
+    pub async fn extract_doc_shared(
+        &self,
+        doc: Arc<PdfDocument>,
+        options: Arc<ToMarkdownOptions>,
+    ) -> Result<MarkdownOutput> {
+        let _doc_permit = self
+            .doc_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| PdfError::TaskJoin(e.to_string()))?;
+        to_markdown_doc_with_semaphore(doc, options, Arc::clone(&self.page_semaphore)).await
+    }
+
+    pub async fn extract_path(
+        &self,
+        path: impl AsRef<Path>,
+        options: ToMarkdownOptions,
+    ) -> Result<MarkdownOutput> {
+        let _doc_permit = self
+            .doc_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| PdfError::TaskJoin(e.to_string()))?;
+        let path_buf = path.as_ref().to_path_buf();
+        let bytes = tokio::fs::read(&path_buf).await?;
+        let mut doc = tokio::task::spawn_blocking(move || PdfDocument::from_bytes(&bytes))
+            .await
+            .map_err(|e| PdfError::TaskJoin(e.to_string()))??;
+        doc.file_path = Some(path_buf);
+        to_markdown_doc_with_semaphore(
+            Arc::new(doc),
+            Arc::new(options),
+            Arc::clone(&self.page_semaphore),
+        )
+        .await
+    }
 }
 
 /// Asynchronous high-concurrency `to_markdown_async` for a file path.
@@ -54,8 +151,16 @@ pub async fn to_markdown_doc_async(
     doc: Arc<PdfDocument>,
     options: ToMarkdownOptions,
 ) -> Result<MarkdownOutput> {
-    let target_pages = resolve_target_pages(&doc, &options)?;
-    let opts_arc = Arc::new(options.clone());
+    let semaphore = Arc::new(Semaphore::new(options.concurrency.max_page_concurrency));
+    to_markdown_doc_with_semaphore(doc, Arc::new(options), semaphore).await
+}
+
+async fn to_markdown_doc_with_semaphore(
+    doc: Arc<PdfDocument>,
+    opts_arc: Arc<ToMarkdownOptions>,
+    semaphore: Arc<Semaphore>,
+) -> Result<MarkdownOutput> {
+    let target_pages = resolve_target_pages(&doc, &opts_arc)?;
 
     let header_resolver = {
         let doc_c = Arc::clone(&doc);
@@ -65,11 +170,10 @@ pub async fn to_markdown_doc_async(
             .map_err(|e| PdfError::TaskJoin(e.to_string()))??
     };
 
-    let semaphore = Arc::new(Semaphore::new(options.concurrency.max_page_concurrency));
     let total_pages = target_pages.len();
     let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-    let mut chunks = if options.hygiene.dedup_running_headers && total_pages >= 3 {
+    let mut chunks = if opts_arc.hygiene.dedup_running_headers && total_pages >= 3 {
         let mut handles = Vec::with_capacity(total_pages);
         for page_idx in target_pages {
             let permit = semaphore
@@ -90,7 +194,7 @@ pub async fn to_markdown_doc_async(
         for h in handles {
             analyzed.push(h.await.map_err(|e| PdfError::TaskJoin(e.to_string()))??);
         }
-        strip_running_headers_from_pages(&mut analyzed, &options);
+        strip_running_headers_from_pages(&mut analyzed, &opts_arc);
 
         let mut render_handles = Vec::with_capacity(analyzed.len());
         for (parsed, layout) in analyzed {
@@ -147,10 +251,10 @@ pub async fn to_markdown_doc_async(
 
     chunks.sort_by_key(|c| c.metadata.page);
 
-    if options.page_chunks {
+    if opts_arc.page_chunks {
         Ok(MarkdownOutput::Chunks(chunks))
     } else {
-        let separator = if options.page_separators {
+        let separator = if opts_arc.page_separators {
             "\n-----\n\n"
         } else {
             "\n"

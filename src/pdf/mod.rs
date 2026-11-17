@@ -107,7 +107,6 @@ pub struct InheritedPageProps {
 /// Thread-safe (`Send + Sync`) immutable PDF document handle with shared concurrent font cache.
 pub struct PdfDocument {
     pub file_path: Option<PathBuf>,
-    pub raw_bytes: Vec<u8>,
     pub pdf_version: String,
     pub objects: BTreeMap<u32, objects::PdfObject>,
     pub trailer: BTreeMap<String, objects::PdfObject>,

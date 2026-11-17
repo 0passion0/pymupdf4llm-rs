@@ -69,6 +69,18 @@ async fn main() -> pymupdf4llm_rs::Result<()> {
 }
 ```
 
+### Web Service / High-Concurrency Singleton (`PdfEngine::global`)
+
+For web backends (Axum / Actix / Tonic) handling many concurrent uploads, use the shared `PdfEngine` singleton (`OnceLock<Arc<PdfEngine>>`) to cap global in-flight documents/pages and reuse identical parsed `ToUnicode` CMaps safely across requests:
+
+```rust
+use pymupdf4llm_rs::{PdfEngine, ToMarkdownOptions};
+
+let output = PdfEngine::global()
+    .extract_bytes(pdf_bytes, ToMarkdownOptions::default())
+    .await?;
+```
+
 ### CLI Tool Usage
 
 ```bash

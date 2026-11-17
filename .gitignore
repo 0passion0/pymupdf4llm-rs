@@ -3,6 +3,11 @@
 **/*.rs.bk
 *.pdb
 
+# AI Studio Runtime Bridge (not required when consuming Rust crate)
+node_modules/
+dist/
+.playwright-cli/
+
 # Environment
 .env
 .env.*

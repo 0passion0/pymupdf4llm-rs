@@ -37,21 +37,25 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
         }
     }
 
-    // Also unpack any /ObjStm (Object Streams, PDF 1.5+) and /XRef trailer dicts
+    // Also unpack any /ObjStm (Object Streams, PDF 1.5+) and /XRef trailer dicts without cloning non-ObjStm streams
     let obj_ids: Vec<u32> = objects.keys().copied().collect();
+    let mut unpacked_entries: Vec<(u32, PdfObject)> = Vec::new();
     for id in obj_ids {
-        if let Some(PdfObject::Stream { dict, data }) = objects.get(&id).cloned() {
+        if let Some(PdfObject::Stream { dict, data }) = objects.get(&id) {
             let obj_type = dict.get("Type").and_then(|v| v.as_name());
             if obj_type == Some("XRef") && trailer.is_empty() {
                 trailer = dict.clone();
             } else if obj_type == Some("ObjStm") {
-                if let Ok(decompressed) = decode_stream_bytes(&dict, &data) {
+                if let Ok(decompressed) = decode_stream_bytes(dict, data) {
                     let n = dict.get("N").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
                     let first = dict.get("First").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-                    unpack_object_stream(&decompressed, n, first, &mut objects);
+                    collect_object_stream_entries(&decompressed, n, first, &mut unpacked_entries);
                 }
             }
         }
+    }
+    for (obj_num, obj) in unpacked_entries {
+        objects.entry(obj_num).or_insert(obj);
     }
 
     if trailer.is_empty() {
@@ -76,7 +80,6 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
 
     Ok(PdfDocument {
         file_path: None,
-        raw_bytes: bytes.to_vec(),
         pdf_version,
         objects,
         trailer,
@@ -88,11 +91,11 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
     })
 }
 
-fn unpack_object_stream(
+fn collect_object_stream_entries(
     data: &[u8],
     n: usize,
     first: usize,
-    objects: &mut BTreeMap<u32, PdfObject>,
+    out: &mut Vec<(u32, PdfObject)>,
 ) {
     if first > data.len() {
         return;
@@ -113,7 +116,7 @@ fn unpack_object_stream(
         if abs_offset < data.len() {
             let mut lexer = Lexer::new(data, abs_offset);
             if let Ok(obj) = lexer.parse_object() {
-                objects.entry(obj_num).or_insert(obj);
+                out.push((obj_num, obj));
             }
         }
     }
@@ -335,6 +338,8 @@ fn resolve_dest_page(
     None
 }
 
+const MAX_DECOMPRESSED_STREAM_BYTES: usize = 64 * 1024 * 1024;
+
 pub fn decode_stream_bytes(dict: &BTreeMap<String, PdfObject>, raw: &[u8]) -> Result<Vec<u8>> {
     let filters: Vec<String> = match dict.get("Filter") {
         None => return Ok(raw.to_vec()),
@@ -350,12 +355,19 @@ pub fn decode_stream_bytes(dict: &BTreeMap<String, PdfObject>, raw: &[u8]) -> Re
     for filter in filters {
         data = match filter.as_str() {
             "FlateDecode" | "Fl" => {
-                let mut decoder = ZlibDecoder::new(data.as_slice());
+                let decoder = ZlibDecoder::new(data.as_slice());
+                let mut limited = decoder.take((MAX_DECOMPRESSED_STREAM_BYTES + 1) as u64);
                 let mut out = Vec::new();
-                decoder.read_to_end(&mut out).map_err(|e| PdfError::Decompress {
+                limited.read_to_end(&mut out).map_err(|e| PdfError::Decompress {
                     filter: "FlateDecode".into(),
                     message: e.to_string(),
                 })?;
+                if out.len() > MAX_DECOMPRESSED_STREAM_BYTES {
+                    return Err(PdfError::Decompress {
+                        filter: "FlateDecode".into(),
+                        message: "Decompressed stream exceeded 64 MB safety limit".into(),
+                    });
+                }
                 if let Some(parms) = dict.get("DecodeParms").and_then(|v| v.as_dict()) {
                     apply_png_predictor(parms, &out).unwrap_or(out)
                 } else {

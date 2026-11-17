@@ -69,6 +69,18 @@ async fn main() -> pymupdf4llm_rs::Result<()> {
 }
 ```
 
+### Web 服务高并发全局单例调用（`PdfEngine::global`）
+
+在 Web 后端（Axum / Actix / Tonic）处理高并发 PDF 上传时，建议使用进程级全局单例 `PdfEngine::global()` 统一限流全进程内的文档与页面并发度，并自动跨请求安全复用相同内容哈希的 `ToUnicode` CMap：
+
+```rust
+use pymupdf4llm_rs::{PdfEngine, ToMarkdownOptions};
+
+let output = PdfEngine::global()
+    .extract_bytes(pdf_bytes, ToMarkdownOptions::default())
+    .await?;
+```
+
 ### 命令行工具（CLI）调用
 
 ```bash

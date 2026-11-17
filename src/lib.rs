@@ -37,7 +37,7 @@ pub use text_cleaner::HygieneStats;
 #[cfg(feature = "async")]
 pub use async_engine::{
     batch_to_markdown_async, to_markdown_async, to_markdown_bytes_async, to_markdown_stream,
-    BatchItemResult,
+    BatchItemResult, PdfEngine,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
