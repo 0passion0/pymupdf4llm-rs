@@ -373,7 +373,8 @@ fn interpret_content_stream(
                         if let StreamToken::Name(name) = &operands[0] {
                             gs.font_name = name.clone();
                         }
-                        gs.font_size = as_num(&operands[1]).abs().max(1.0);
+                        let sz = as_num(&operands[1]).abs();
+                        gs.font_size = if sz > 1e-4 { sz } else { 1.0 };
                     }
                     "Tr" if !operands.is_empty() => {
                         gs.render_mode = (as_num(&operands[0]).round() as i32).clamp(0, 7) as u8;
@@ -406,6 +407,10 @@ fn interpret_content_stream(
                         text_matrix = line_matrix;
                     }
                     "Tj" | "'" | "\"" => {
+                        if op == "\"" && operands.len() >= 3 {
+                            gs.word_spacing = as_num(&operands[0]);
+                            gs.char_spacing = as_num(&operands[1]);
+                        }
                         if op == "'" || op == "\"" {
                             line_matrix = mul_matrix([1.0, 0.0, 0.0, 1.0, 0.0, -gs.leading], line_matrix);
                             text_matrix = line_matrix;
@@ -439,7 +444,8 @@ fn interpret_content_stream(
                                     }
                                     StreamToken::Number(adj) => {
                                         let dx = (-adj / 1000.0) * gs.font_size * (gs.horiz_scale / 100.0);
-                                        text_matrix[4] += dx;
+                                        text_matrix[4] += dx * text_matrix[0];
+                                        text_matrix[5] += dx * text_matrix[1];
                                     }
                                     _ => {}
                                 }
@@ -562,13 +568,33 @@ fn emit_text_bytes(
 ) {
     let font = fonts.get(&gs.font_name).cloned().unwrap_or_default();
     let (decoded, glyph_units) = font.decode_bytes(bytes);
+
+    let combined = mul_matrix(*text_matrix, gs.ctm);
+    let raw_scale_x = combined[0].hypot(combined[1]);
+    let scale_x = if raw_scale_x > 1e-3 { raw_scale_x } else { 1.0 };
+    let effective_size = (gs.font_size * scale_x).max(1.0);
+
+    let char_count = if font.is_two_byte {
+        bytes.len() / 2
+    } else {
+        bytes.len()
+    };
+    let space_count = if font.is_two_byte {
+        0
+    } else {
+        bytes.iter().filter(|&&b| b == b' ').count()
+    };
+    let advance = ((glyph_units / 1000.0) * gs.font_size
+        + (char_count as f32 * gs.char_spacing)
+        + (space_count as f32 * gs.word_spacing))
+        * (gs.horiz_scale / 100.0);
+
+    text_matrix[4] += advance * text_matrix[0];
+    text_matrix[5] += advance * text_matrix[1];
+
     if decoded.is_empty() {
         return;
     }
-
-    let combined = mul_matrix(*text_matrix, gs.ctm);
-    let scale_x = combined[0].hypot(combined[1]).max(1.0);
-    let effective_size = (gs.font_size * scale_x).max(1.0);
     if effective_size < options.fontsize_limit {
         return;
     }
@@ -578,16 +604,11 @@ fn emit_text_bytes(
     }
 
     let rotation_deg = combined[1].atan2(combined[0]).to_degrees();
-    let advance = (glyph_units / 1000.0) * gs.font_size * (gs.horiz_scale / 100.0)
-        + (decoded.chars().count() as f32 * gs.char_spacing);
-
     let x0 = combined[4];
     let baseline_y = page_height - combined[5];
-    let x1 = x0 + advance * (gs.ctm[0].abs().max(1.0));
+    let x1 = x0 + advance * scale_x;
     let y0 = baseline_y - effective_size * 0.85;
     let y1 = baseline_y + effective_size * 0.2;
-
-    text_matrix[4] += advance;
 
     out.push(TextSpan {
         text: decoded,
@@ -844,9 +865,29 @@ fn tokenize_content_stream(data: &[u8]) -> Vec<StreamToken> {
                             let esc = data[i];
                             i += 1;
                             match esc {
+                                b'0'..=b'7' => {
+                                    let mut val = (esc - b'0') as u16;
+                                    for _ in 0..2 {
+                                        if i < data.len() && (b'0'..=b'7').contains(&data[i]) {
+                                            val = val * 8 + (data[i] - b'0') as u16;
+                                            i += 1;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    s.push((val & 0xFF) as u8);
+                                }
                                 b'n' => s.push(b'\n'),
                                 b'r' => s.push(b'\r'),
                                 b't' => s.push(b'\t'),
+                                b'b' => s.push(0x08),
+                                b'f' => s.push(0x0C),
+                                b'\r' => {
+                                    if i < data.len() && data[i] == b'\n' {
+                                        i += 1;
+                                    }
+                                }
+                                b'\n' => {}
                                 other => s.push(other),
                             }
                         }
@@ -922,6 +963,9 @@ fn tokenize_content_stream(data: &[u8]) -> Vec<StreamToken> {
                     i += 1;
                 }
                 let op = String::from_utf8_lossy(&data[start..i]).into_owned();
+                if op == "BI" && skip_inline_image(data, &mut i) {
+                    continue;
+                }
                 if !op.is_empty() {
                     tokens.push(StreamToken::Operator(op));
                 } else {
@@ -933,6 +977,43 @@ fn tokenize_content_stream(data: &[u8]) -> Vec<StreamToken> {
     tokens
 }
 
+fn skip_inline_image(data: &[u8], cursor: &mut usize) -> bool {
+    let header_end = (*cursor + 4096).min(data.len());
+    let mut pos = *cursor;
+    let mut img_start = None;
+    while pos + 2 <= header_end {
+        if data[pos] == b'I'
+            && data[pos + 1] == b'D'
+            && (pos == *cursor || data[pos - 1].is_ascii_whitespace() || data[pos - 1] == b']')
+            && data.get(pos + 2).is_some_and(|b| b.is_ascii_whitespace())
+        {
+            let mut s = pos + 3;
+            if data.get(pos + 2) == Some(&b'\r') && data.get(pos + 3) == Some(&b'\n') {
+                s += 1;
+            }
+            img_start = Some(s.min(data.len()));
+            break;
+        }
+        pos += 1;
+    }
+    let Some(start) = img_start else {
+        return false;
+    };
+    let mut p = start;
+    while p + 2 <= data.len() {
+        if data[p] == b'E'
+            && data[p + 1] == b'I'
+            && (p == start || data[p - 1].is_ascii_whitespace())
+            && data.get(p + 2).map_or(true, |b| b.is_ascii_whitespace())
+        {
+            *cursor = p + 2;
+            return true;
+        }
+        p += 1;
+    }
+    false
+}
+
 fn find_array_elem_end(data: &[u8], start: usize) -> usize {
     let b = data[start];
     if b == b'(' {
@@ -940,7 +1021,7 @@ fn find_array_elem_end(data: &[u8], start: usize) -> usize {
         let mut depth = 1usize;
         while i < data.len() && depth > 0 {
             if data[i] == b'\\' {
-                i += 2;
+                i = (i + 2).min(data.len());
                 continue;
             }
             if data[i] == b'(' {
@@ -957,6 +1038,18 @@ fn find_array_elem_end(data: &[u8], start: usize) -> usize {
             .position(|&c| c == b'>')
             .map(|p| start + p + 1)
             .unwrap_or(data.len())
+    } else if b == b'[' {
+        let mut i = start + 1;
+        let mut depth = 1usize;
+        while i < data.len() && depth > 0 {
+            if data[i] == b'[' {
+                depth += 1;
+            } else if data[i] == b']' {
+                depth -= 1;
+            }
+            i += 1;
+        }
+        i
     } else {
         let mut i = start;
         while i < data.len() && !data[i].is_ascii_whitespace() && data[i] != b']' && data[i] != b'(' && data[i] != b'<' {

@@ -38,12 +38,13 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
     }
 
     // Also unpack any /ObjStm (Object Streams, PDF 1.5+) and /XRef trailer dicts without cloning non-ObjStm streams
+    let has_classic_trailer = !trailer.is_empty();
     let obj_ids: Vec<u32> = objects.keys().copied().collect();
     let mut unpacked_entries: Vec<(u32, PdfObject)> = Vec::new();
     for id in obj_ids {
         if let Some(PdfObject::Stream { dict, data }) = objects.get(&id) {
             let obj_type = dict.get("Type").and_then(|v| v.as_name());
-            if obj_type == Some("XRef") && trailer.is_empty() {
+            if obj_type == Some("XRef") && !has_classic_trailer {
                 trailer = dict.clone();
             } else if obj_type == Some("ObjStm") {
                 if let Ok(decompressed) = decode_stream_bytes(dict, data) {

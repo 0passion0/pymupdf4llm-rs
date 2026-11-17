@@ -1,4 +1,5 @@
 pub mod content_stream;
+pub mod encoding;
 pub mod font;
 pub mod objects;
 pub mod parser;

@@ -91,7 +91,7 @@ impl PdfObject {
     }
 }
 
-/// Decodes PDFDocEncoding or UTF-16BE / UTF-8 text strings per ISO 32000-1 §7.9.2.2.
+/// Decodes PDFDocEncoding, UTF-16BE/LE, or UTF-8 text strings per ISO 32000-1 §7.9.2.2.
 pub fn decode_pdf_text_string(bytes: &[u8]) -> String {
     if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
         let mut units = Vec::with_capacity((bytes.len() - 2) / 2);
@@ -102,11 +102,35 @@ pub fn decode_pdf_text_string(bytes: &[u8]) -> String {
         }
         return String::from_utf16_lossy(&units);
     }
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let mut units = Vec::with_capacity((bytes.len() - 2) / 2);
+        let mut i = 2;
+        while i + 1 < bytes.len() {
+            units.push(u16::from_le_bytes([bytes[i], bytes[i + 1]]));
+            i += 2;
+        }
+        return String::from_utf16_lossy(&units);
+    }
     if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
         return String::from_utf8_lossy(&bytes[3..]).into_owned();
     }
     if let Ok(utf8) = std::str::from_utf8(bytes) {
         return utf8.to_string();
     }
-    bytes.iter().map(|&b| b as char).collect()
+    bytes.iter().map(|&b| pdf_doc_encoding_byte_to_char(b)).collect()
+}
+
+const PDF_DOC_HIGH: [char; 33] = [
+    '•', '†', '‡', '…', '—', '–', 'ƒ', '⁄', '‹', '›', '−', '‰', '„', '“', '”', '‘',
+    '’', '‚', '™', 'ﬁ', 'ﬂ', 'Ł', 'Œ', 'Š', 'Ÿ', 'Ž', 'ı', 'ł', 'œ', 'š', 'ž', '\u{FFFD}',
+    '€',
+];
+
+#[inline]
+fn pdf_doc_encoding_byte_to_char(b: u8) -> char {
+    if (0x80..=0xA0).contains(&b) {
+        PDF_DOC_HIGH[(b - 0x80) as usize]
+    } else {
+        b as char
+    }
 }

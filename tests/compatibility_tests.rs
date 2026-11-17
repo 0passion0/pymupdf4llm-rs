@@ -248,3 +248,152 @@ fn test_closely_spaced_spans_total_order_never_panics() {
     assert!(md.contains("Span0"));
     assert!(md.contains("Span39"));
 }
+
+#[test]
+fn test_type1c_numeric_glyph_differences_octal_and_scaled_tm() {
+    let stream = b"BT\n\
+        /F1 1 Tf 9.0 0 0 9.0 72 720 Tm\n\
+        [(\\001\\002\\003\\004\\005\\006)-175(\\007\\010\\011\\012\\013\\014\\015)] TJ\n\
+        /F2 1 Tf 9.0 0 0 9.0 72 700 Tm (\\001) Tj\n\
+        /F3 1 Tf 9.0 0 0 9.0 86 700 Tm (\\001) Tj\n\
+        /F4 1 Tf 9.0 0 0 9.0 100 700 Tm (\\001) Tj\n\
+        /F5 1 Tf 9.0 0 0 9.0 72 680 Tm (\\001\\002\\003) Tj\n\
+        ET\n";
+
+    let mut pdf = Vec::new();
+    pdf.extend_from_slice(b"%PDF-1.3\n");
+    let objs = vec![
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 6 0 R /F3 8 0 R /F4 10 0 R /F5 12 0 R >> >> /Contents 14 0 R >>\nendobj\n".to_string(),
+        "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /HLPAAI+AdvP40418 /FirstChar 1 /LastChar 13 /Widths [333 333 444 333 556 444 278 500 556 500 722 500 500] /Encoding 5 0 R >>\nendobj\n".to_string(),
+        "5 0 obj\n<< /Type /Encoding /Differences [ 1/C116/C114/C97/C102/C174/C99/C105/C110/C175/C111/C119/C177/C50 ] >>\nendobj\n".to_string(),
+        "6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /HLPAGI+AdvT001 /FirstChar 1 /LastChar 1 /Widths [750] /Encoding 7 0 R >>\nendobj\n".to_string(),
+        "7 0 obj\n<< /Type /Encoding /Differences [ 1/C223 ] >>\nendobj\n".to_string(),
+        "8 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /HLPAMF+AdvPi1 /FirstChar 1 /LastChar 1 /Widths [552] /Encoding 9 0 R >>\nendobj\n".to_string(),
+        "9 0 obj\n<< /Type /Encoding /Differences [ 1/C109 ] >>\nendobj\n".to_string(),
+        "10 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /HMANKN+AdvTT5843c571+20 /FirstChar 1 /LastChar 1 /Widths [500] /Encoding 11 0 R >>\nendobj\n".to_string(),
+        "11 0 obj\n<< /Type /Encoding /Differences [ 1/C19 ] >>\nendobj\n".to_string(),
+        "12 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /CustomUnicode /FirstChar 1 /LastChar 3 /Widths [1000 1000 667] /Encoding 13 0 R >>\nendobj\n".to_string(),
+        "13 0 obj\n<< /Type /Encoding /Differences [ 1/uni4E2D/u6587/A.sc ] >>\nendobj\n".to_string(),
+        format!(
+            "14 0 obj\n<< /Length {} >>\nstream\n{}endstream\nendobj\n",
+            stream.len(),
+            String::from_utf8_lossy(stream)
+        ),
+    ];
+
+    let mut offsets = Vec::new();
+    for obj in &objs {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(obj.as_bytes());
+    }
+    let xref_pos = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for off in offsets {
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off).as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n",
+            objs.len() + 1,
+            xref_pos
+        )
+        .as_bytes(),
+    );
+
+    let md = to_markdown(pdf.as_slice(), ToMarkdownOptions::default())
+        .unwrap()
+        .into_text();
+    assert!(md.contains("traffic inflow–2"), "got: {md}");
+    assert!(md.contains("©"), "got: {md}");
+    assert!(md.contains("µ"), "got: {md}");
+    assert!(md.contains("–"), "got: {md}");
+    assert!(md.contains("中文A"), "got: {md}");
+}
+
+#[test]
+fn test_extended_cmap_encodings_inline_images_and_metadata() {
+    let cmap = b"/CIDInit /ProcSet findresource begin\n\
+        12 dict begin begincmap\n\
+        1 begincodespacerange\n\
+        <00> <7F>\n\
+        <8140> <FEFE>\n\
+        endcodespacerange\n\
+        2 beginbfchar <01> <0041> <8140> <4E2D> endbfchar\n\
+        1 beginbfrange\n\
+        <02> <03>\n\
+        [\n\
+          <0042>\n\
+          <0043>\n\
+        ]\n\
+        endbfrange\n\
+        endcmap end end\n";
+
+    let page_stream = b"BT\n\
+        /F1 12 Tf 72 720 Tm <0102038140> Tj\n\
+        /F2 12 Tf 72 700 Tm (Caf\\216 \\336\\337) Tj\n\
+        /F3 12 Tf 72 680 Tm (\\001) Tj\n\
+        ET\n\
+        BI /W 2 /H 2 /BPC 8 /CS /G ID \x00(FAKE_TJ) /F1 12 Tf EI\n\
+        BT /F4 12 Tf 72 660 Tm (After inline image) Tj ET\n";
+
+    let mut pdf = Vec::new();
+    pdf.extend_from_slice(b"%PDF-1.5\n");
+    let objs = vec![
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 6 0 R /F3 7 0 R /F4 9 0 R >> >> /Contents 10 0 R >>\nendobj\n".to_string(),
+        "4 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /MixedCMap /Encoding /Identity-H /ToUnicode 5 0 R >>\nendobj\n".to_string(),
+        format!(
+            "5 0 obj\n<< /Length {} >>\nstream\n{}endstream\nendobj\n",
+            cmap.len(),
+            String::from_utf8_lossy(cmap)
+        ),
+        "6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /MacRomanEncoding >>\nendobj\n".to_string(),
+        "7 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats /Encoding 8 0 R >>\nendobj\n".to_string(),
+        "8 0 obj\n<< /Type /Encoding /Differences [ 1/a19 ] >>\nendobj\n".to_string(),
+        "9 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".to_string(),
+        format!(
+            "10 0 obj\n<< /Length {} >>\nstream\n{}endstream\nendobj\n",
+            page_stream.len(),
+            String::from_utf8_lossy(page_stream)
+        ),
+        "11 0 obj\n<< /Title (Report \\205 v1) >>\nendobj\n".to_string(),
+    ];
+
+    let mut offsets = Vec::new();
+    for obj in &objs {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(obj.as_bytes());
+    }
+    let xref_pos = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for off in offsets {
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off).as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R /Info 11 0 R >>\nstartxref\n{}\n%%EOF\n",
+            objs.len() + 1,
+            xref_pos
+        )
+        .as_bytes(),
+    );
+
+    let MarkdownOutput::Chunks(chunks) = to_markdown(
+        pdf.as_slice(),
+        ToMarkdownOptions::builder().page_chunks(true).build(),
+    )
+    .unwrap()
+    else {
+        panic!("expected chunks");
+    };
+    let chunk = &chunks[0];
+    assert_eq!(chunk.metadata.title, "Report – v1");
+    assert!(chunk.text.contains("ABC中"), "got: {}", chunk.text);
+    assert!(chunk.text.contains("Café fifl"), "got: {}", chunk.text);
+    assert!(chunk.text.contains("✓"), "got: {}", chunk.text);
+    assert!(chunk.text.contains("After inline image"), "got: {}", chunk.text);
+    assert!(!chunk.text.contains("FAKE_TJ"), "got: {}", chunk.text);
+}

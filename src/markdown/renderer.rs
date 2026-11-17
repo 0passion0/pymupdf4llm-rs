@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::config::ToMarkdownOptions;
 use crate::layout::headers::HeaderResolver;
@@ -394,7 +395,7 @@ fn format_styled_spans(
         let s = &spans[i];
         if i > 0 {
             let gap = s.bbox.x0 - spans[i - 1].bbox.x1;
-            if gap > s.font_size * 0.22 && !out.ends_with(' ') && !s.text.starts_with(' ') {
+            if gap > s.font_size * 0.12 && !out.ends_with(' ') && !s.text.starts_with(' ') {
                 out.push(' ');
             }
         }
@@ -412,7 +413,7 @@ fn format_styled_spans(
                 let sk = &spans[k];
                 if k > i {
                     let gap = sk.bbox.x0 - spans[k - 1].bbox.x1;
-                    if gap > sk.font_size * 0.22
+                    if gap > sk.font_size * 0.12
                         && !combined_inner.ends_with(' ')
                         && !sk.text.starts_with(' ')
                     {
@@ -448,6 +449,9 @@ fn format_styled_spans(
         out.push_str(&styled);
         out.push_str(&trail_ws);
         i += 1;
+    }
+    if !out.is_ascii() {
+        out = out.nfc().collect();
     }
     out
 }

@@ -1,3 +1,5 @@
+use unicode_normalization::UnicodeNormalization;
+
 use crate::config::Rect;
 use crate::layout::TextLine;
 use crate::pdf::TextSpan;
@@ -206,11 +208,14 @@ fn group_spans_into_lines(spans: &[TextSpan]) -> Vec<TextLine> {
                 }
                 if i > 0 {
                     let gap = s.bbox.x0 - line_spans[i - 1].bbox.x1;
-                    if gap > s.font_size * 0.22 && !raw_text.ends_with(' ') && !s.text.starts_with(' ') {
+                    if gap > s.font_size * 0.12 && !raw_text.ends_with(' ') && !s.text.starts_with(' ') {
                         raw_text.push(' ');
                     }
                 }
                 raw_text.push_str(&s.text);
+            }
+            if !raw_text.is_ascii() {
+                raw_text = raw_text.nfc().collect();
             }
 
             TextLine {
