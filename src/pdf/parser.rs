@@ -375,8 +375,8 @@ pub fn decode_stream_bytes(dict: &BTreeMap<String, PdfObject>, raw: &[u8]) -> Re
                 }
             }
             "ASCIIHexDecode" | "AHx" => decode_ascii_hex(&data),
-            "ASCII85Decode" | "A85" => decode_ascii85(&data),
-            "RunLengthDecode" | "RL" => decode_run_length(&data),
+            "ASCII85Decode" | "A85" => decode_ascii85(&data)?,
+            "RunLengthDecode" | "RL" => decode_run_length(&data)?,
             "LZWDecode" | "LZW" => {
                 let early = dict
                     .get("DecodeParms")
@@ -385,7 +385,7 @@ pub fn decode_stream_bytes(dict: &BTreeMap<String, PdfObject>, raw: &[u8]) -> Re
                     .and_then(|v| v.as_i64())
                     .unwrap_or(1)
                     != 0;
-                let decoded = decode_lzw(&data, early);
+                let decoded = decode_lzw(&data, early)?;
                 if let Some(parms) = dict.get("DecodeParms").and_then(|v| v.as_dict()) {
                     apply_png_predictor(parms, &decoded).unwrap_or(decoded)
                 } else {
@@ -398,7 +398,7 @@ pub fn decode_stream_bytes(dict: &BTreeMap<String, PdfObject>, raw: &[u8]) -> Re
     Ok(data)
 }
 
-fn decode_lzw(data: &[u8], early_change: bool) -> Vec<u8> {
+fn decode_lzw(data: &[u8], early_change: bool) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     let mut dict: Vec<Vec<u8>> = (0..=255).map(|b| vec![b as u8]).collect();
     dict.push(Vec::new()); // 256 = Clear
@@ -437,14 +437,22 @@ fn decode_lzw(data: &[u8], early_change: bool) -> Vec<u8> {
         } else if code as usize == dict.len() {
             let Some(ref p) = prev else { break };
             let mut e = p.clone();
-            e.push(p[0]);
+            if let Some(&first) = p.first() {
+                e.push(first);
+            }
             e
         } else {
             break;
         };
+        if out.len().saturating_add(entry.len()) > MAX_DECOMPRESSED_STREAM_BYTES {
+            return Err(PdfError::Decompress {
+                filter: "LZWDecode".into(),
+                message: "Decompressed stream exceeded 64 MB safety limit".into(),
+            });
+        }
         out.extend_from_slice(&entry);
         if let Some(ref p) = prev {
-            if dict.len() < 4096 {
+            if dict.len() < 4096 && !entry.is_empty() {
                 let mut new_entry = p.clone();
                 new_entry.push(entry[0]);
                 dict.push(new_entry);
@@ -460,7 +468,7 @@ fn decode_lzw(data: &[u8], early_change: bool) -> Vec<u8> {
         }
         prev = Some(entry);
     }
-    out
+    Ok(out)
 }
 
 fn apply_png_predictor(parms: &BTreeMap<String, PdfObject>, data: &[u8]) -> Option<Vec<u8>> {
@@ -544,7 +552,7 @@ fn decode_ascii_hex(data: &[u8]) -> Vec<u8> {
     out
 }
 
-fn decode_ascii85(data: &[u8]) -> Vec<u8> {
+fn decode_ascii85(data: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     let mut group = Vec::with_capacity(5);
     let mut i = 0;
@@ -558,6 +566,12 @@ fn decode_ascii85(data: &[u8]) -> Vec<u8> {
             continue;
         }
         if b == b'z' && group.is_empty() {
+            if out.len().saturating_add(4) > MAX_DECOMPRESSED_STREAM_BYTES {
+                return Err(PdfError::Decompress {
+                    filter: "ASCII85Decode".into(),
+                    message: "Decompressed stream exceeded 64 MB safety limit".into(),
+                });
+            }
             out.extend_from_slice(&[0, 0, 0, 0]);
             continue;
         }
@@ -565,6 +579,12 @@ fn decode_ascii85(data: &[u8]) -> Vec<u8> {
             group.push((b - b'!') as u32);
             if group.len() == 5 {
                 let val = group.iter().fold(0u32, |acc, &d| acc * 85 + d);
+                if out.len().saturating_add(4) > MAX_DECOMPRESSED_STREAM_BYTES {
+                    return Err(PdfError::Decompress {
+                        filter: "ASCII85Decode".into(),
+                        message: "Decompressed stream exceeded 64 MB safety limit".into(),
+                    });
+                }
                 out.extend_from_slice(&val.to_be_bytes());
                 group.clear();
             }
@@ -577,12 +597,19 @@ fn decode_ascii85(data: &[u8]) -> Vec<u8> {
         }
         let val = group.iter().fold(0u32, |acc, &d| acc * 85 + d);
         let bytes = val.to_be_bytes();
-        out.extend_from_slice(&bytes[..n - 1]);
+        let extra = n - 1;
+        if out.len().saturating_add(extra) > MAX_DECOMPRESSED_STREAM_BYTES {
+            return Err(PdfError::Decompress {
+                filter: "ASCII85Decode".into(),
+                message: "Decompressed stream exceeded 64 MB safety limit".into(),
+            });
+        }
+        out.extend_from_slice(&bytes[..extra]);
     }
-    out
+    Ok(out)
 }
 
-fn decode_run_length(data: &[u8]) -> Vec<u8> {
+fn decode_run_length(data: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < data.len() {
@@ -593,17 +620,30 @@ fn decode_run_length(data: &[u8]) -> Vec<u8> {
         } else if len < 128 {
             let count = len as usize + 1;
             let end = (i + count).min(data.len());
+            let added = end - i;
+            if out.len().saturating_add(added) > MAX_DECOMPRESSED_STREAM_BYTES {
+                return Err(PdfError::Decompress {
+                    filter: "RunLengthDecode".into(),
+                    message: "Decompressed stream exceeded 64 MB safety limit".into(),
+                });
+            }
             out.extend_from_slice(&data[i..end]);
             i = end;
         } else {
             let count = 257 - len as usize;
             if i < data.len() {
+                if out.len().saturating_add(count) > MAX_DECOMPRESSED_STREAM_BYTES {
+                    return Err(PdfError::Decompress {
+                        filter: "RunLengthDecode".into(),
+                        message: "Decompressed stream exceeded 64 MB safety limit".into(),
+                    });
+                }
                 out.resize(out.len() + count, data[i]);
                 i += 1;
             }
         }
     }
-    out
+    Ok(out)
 }
 
 fn scan_next_indirect_object(bytes: &[u8], start: usize) -> Option<(u32, u16, PdfObject, usize)> {

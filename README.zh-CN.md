@@ -81,11 +81,56 @@ let output = PdfEngine::global()
     .await?;
 ```
 
+### Python 包调用（PyO3 + `maturin`，实例资源复用与释放 GIL）
+
+构建并安装本地 Python 扩展包（支持 `Python >= 3.9`、`abi3` 稳定 ABI，无需 C/C++ 运行时依赖）：
+
+```bash
+pip install maturin pytest
+maturin develop --release
+pytest -v tests/test_python_api.py
+```
+
+在应用启动时实例化一次 `PdfExtractor`，内部会持久持有共享的 Rust 资源（`Arc<PdfEngine>` 并发信号量、Tokio + Rayon 线程池、全局 `ToUnicode` CMap 缓存及 `max_pdf_bytes` / `max_pages` 安全上限），随后跨请求高频复用实例下的各解析方法与默认参数：
+
+```python
+from pymupdf4llm_rs import PdfExtractor
+
+# 1. 启动时实例化一次，持有共享引擎与参数/安全上限
+extractor = PdfExtractor(
+    table_strategy="lines_strict",
+    clean_mojibake=True,
+    strip_watermarks=True,
+    ignore_invisible_text=True,
+    max_concurrent_docs=4,
+    max_concurrent_pages=8,
+    max_pdf_bytes=64 * 1024 * 1024,  # 超过体积限制在解析前直接拦截
+    max_pages=500,                   # 限制最大页数防止超大 PDF 耗尽内存
+)
+
+# 2. 跨请求直接复用实例方法（解析期间自动释放 Python GIL）
+md = extractor.to_markdown("paper.pdf")
+md_from_bytes = extractor.to_markdown_bytes(pdf_bytes)
+chunks = extractor.to_chunks("paper.pdf", extract_words=True)
+
+# 3. 派生轻量配置副本：共享同一个底层 Arc<PdfEngine> 资源池
+text_table_extractor = extractor.with_options(table_strategy="text", ignore_code=True)
+
+# 4. 同一份 PDF 解析一次得到 ParsedPdf 句柄，零重复解析导出多种格式
+with extractor.open(pdf_bytes) as doc:
+    meta = doc.metadata()
+    toc = doc.toc()
+    md = doc.to_markdown()
+    chunks = doc.to_chunks()
+    json_str = doc.to_json()
+    plain = doc.to_text()
+```
+
 ### 命令行工具（CLI）调用
 
 ```bash
 cargo run --release --features cli -- paper.pdf --page-chunks --concurrency 8 -o output.json
-cargo test --all-features
+cargo test --features "async,cli,images"
 ```
 
 ---
@@ -95,18 +140,22 @@ cargo test --all-features
 ```text
 .
 ├── Cargo.toml
+├── pyproject.toml                 # Maturin Python 扩展构建配置（abi3-py39）
+├── python/pymupdf4llm_rs/         # Python 封装入口、.pyi 类型存根与 LlamaMarkdownReader
 ├── src/
-│   ├── lib.rs                 # 公共 API (to_markdown, to_json, to_text, PageChunk)
-│   ├── async_engine.rs        # Tokio 信号量限流 + Rayon 并行与流式输出
-│   ├── config.rs              # ToMarkdownOptions, TableStrategy, TextHygieneConfig
-│   ├── text_cleaner.rs        # 乱码/PUA/3 Tr OCR/水印/伪粗体/跨页页眉清洗模块
-│   ├── llama_reader.rs        # LlamaMarkdownReader RAG 接口
-│   ├── pdf/                   # 二进制词法分析、Flate/LZW 解码、字体/ToUnicode、内容流状态机
-│   ├── layout/                # SpatialGrid、UnionFind 多表分离、X-Y Cut 多栏切分、标题聚类
-│   ├── markdown/              # PageChunk 与 Markdown 渲染、断字拼接、相邻链接合并
-│   └── bin/pymupdf4llm.rs     # CLI 命令行入口
+│   ├── lib.rs                     # 公共 API (to_markdown, to_json, to_text, PageChunk)
+│   ├── python.rs                  # PyO3 原生绑定（PdfExtractor, ParsedPdf, 释放 GIL）
+│   ├── async_engine.rs            # Tokio 信号量限流 + Rayon 并行与全局 PdfEngine
+│   ├── config.rs                  # ToMarkdownOptions, TableStrategy, TextHygieneConfig
+│   ├── text_cleaner.rs            # 乱码/PUA/3 Tr OCR/水印/伪粗体/跨页页眉清洗模块
+│   ├── llama_reader.rs            # LlamaMarkdownReader RAG 接口
+│   ├── pdf/                       # 二进制词法分析、Flate/LZW/A85/RLE（64MB 限流）与 CMap 缓存
+│   ├── layout/                    # SpatialGrid、UnionFind 多表分离、X-Y Cut 多栏切分、标题聚类
+│   ├── markdown/                  # PageChunk 与 Markdown 渲染、断字拼接、相邻链接合并
+│   └── bin/pymupdf4llm.rs         # CLI 命令行入口
 └── tests/
-    └── compatibility_tests.rs # 集成测试（多栏、CJK、Form XObject、清洗、异步并发）
+    ├── compatibility_tests.rs     # Rust 集成测试（多栏、CJK、Form XObject、清洗、异步并发）
+    └── test_python_api.py         # Pytest 集成测试（实例复用、ParsedPdf、安全边界、多线程 GIL）
 ```
 
 ---

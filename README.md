@@ -81,11 +81,56 @@ let output = PdfEngine::global()
     .await?;
 ```
 
+### Python Package (PyO3 + `maturin`, Reusable Class & GIL-Released)
+
+Build and install locally into your Python environment (`Python >= 3.9`, `abi3`):
+
+```bash
+pip install maturin pytest
+maturin develop --release
+pytest -v tests/test_python_api.py
+```
+
+Instantiate `PdfExtractor` once per worker/service to hold shared Rust resources (`Arc<PdfEngine>`, bounded semaphores, Tokio runtime, global `ToUnicode` CMap cache, and `max_pdf_bytes` / `max_pages` safety limits), and reuse its methods across requests:
+
+```python
+from pymupdf4llm_rs import PdfExtractor
+
+# Instantiate once and reuse across HTTP requests / batch workers
+extractor = PdfExtractor(
+    table_strategy="lines_strict",
+    clean_mojibake=True,
+    strip_watermarks=True,
+    ignore_invisible_text=True,
+    max_concurrent_docs=4,
+    max_concurrent_pages=8,
+    max_pdf_bytes=64 * 1024 * 1024,  # reject oversized payloads before parsing
+    max_pages=500,
+)
+
+# Reuse configured defaults directly (Python GIL released during Rust parsing)
+md = extractor.to_markdown("paper.pdf")
+md_from_bytes = extractor.to_markdown_bytes(pdf_bytes)
+chunks = extractor.to_chunks("paper.pdf", extract_words=True)
+
+# Lightweight derived preset sharing the SAME underlying Arc<PdfEngine>
+fast_text_extractor = extractor.with_options(table_strategy="text", ignore_code=True)
+
+# Or parse once into ParsedPdf and extract multiple views without re-parsing
+with extractor.open(pdf_bytes) as doc:
+    meta = doc.metadata()
+    toc = doc.toc()
+    md = doc.to_markdown()
+    chunks = doc.to_chunks()
+    json_str = doc.to_json()
+    plain = doc.to_text()
+```
+
 ### CLI Tool Usage
 
 ```bash
 cargo run --release --features cli -- paper.pdf --page-chunks --concurrency 8 -o output.json
-cargo test --all-features
+cargo test --features "async,cli,images"
 ```
 
 ---
@@ -95,18 +140,22 @@ cargo test --all-features
 ```text
 .
 ├── Cargo.toml
+├── pyproject.toml                 # Maturin build configuration for Python wheel (abi3-py39)
+├── python/pymupdf4llm_rs/         # Python wrapper, PEP 484 .pyi stubs, LlamaMarkdownReader
 ├── src/
-│   ├── lib.rs                 # Public API (to_markdown, to_json, to_text, PageChunk)
-│   ├── async_engine.rs        # Tokio semaphore + Rayon bounded concurrency & streaming
-│   ├── config.rs              # ToMarkdownOptions, TableStrategy, TextHygieneConfig
-│   ├── text_cleaner.rs        # Mojibake, PUA, 3 Tr OCR, watermark, faux-bold & header hygiene
-│   ├── llama_reader.rs        # LlamaMarkdownReader integration
-│   ├── pdf/                   # Binary lexer, Flate/LZW decoders, fonts/ToUnicode, content stream
-│   ├── layout/                # SpatialGrid, UnionFind tables, X-Y Cut columns, header detection
-│   ├── markdown/              # PageChunk & Markdown renderer, de-hyphenation, link merging
-│   └── bin/pymupdf4llm.rs     # CLI binary
+│   ├── lib.rs                     # Public API (to_markdown, to_json, to_text, PageChunk)
+│   ├── python.rs                  # PyO3 native extension (PdfExtractor, ParsedPdf, GIL release)
+│   ├── async_engine.rs            # Tokio semaphore + Rayon bounded concurrency & streaming
+│   ├── config.rs                  # ToMarkdownOptions, TableStrategy, TextHygieneConfig
+│   ├── text_cleaner.rs            # Mojibake, PUA, 3 Tr OCR, watermark, faux-bold & header hygiene
+│   ├── llama_reader.rs            # LlamaMarkdownReader integration
+│   ├── pdf/                       # Binary lexer, Flate/LZW/A85/RLE decoders (64MB capped), CMap cache
+│   ├── layout/                    # SpatialGrid, UnionFind tables, X-Y Cut columns, header detection
+│   ├── markdown/                  # PageChunk & Markdown renderer, de-hyphenation, link merging
+│   └── bin/pymupdf4llm.rs         # CLI binary
 └── tests/
-    └── compatibility_tests.rs # Integration tests (multi-column, CJK, Form XObject, hygiene, async)
+    ├── compatibility_tests.rs     # Rust integration tests (multi-column, CJK, Form XObject, async)
+    └── test_python_api.py         # Pytest suite for PdfExtractor, ParsedPdf, safety bounds & threads
 ```
 
 ---

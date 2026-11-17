@@ -10,7 +10,7 @@ const ROOT = process.cwd();
 function collectFiles(dir: string, out: Array<{ rel: string; data: Buffer }> = []) {
   if (!fs.existsSync(dir)) return out;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (['target', '.git', 'node_modules', 'dist', 'web', '.aistudio'].includes(entry.name)) continue;
+    if (['target', '.git', 'node_modules', 'dist', 'web', '.aistudio', '__pycache__', '.pytest_cache'].includes(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) collectFiles(full, out);
     else if (entry.isFile()) {
@@ -21,7 +21,7 @@ function collectFiles(dir: string, out: Array<{ rel: string; data: Buffer }> = [
 }
 
 function buildCrateTarGz(): Buffer {
-  const targets = ['Cargo.toml', 'LICENSE', 'README.md', 'README.zh-CN.md', 'src', 'tests'];
+  const targets = ['Cargo.toml', 'pyproject.toml', 'LICENSE', 'README.md', 'README.zh-CN.md', 'src', 'python', 'tests'];
   const files: Array<{ rel: string; data: Buffer }> = [];
   for (const t of targets) {
     const full = path.join(ROOT, t);

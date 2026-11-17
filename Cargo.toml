@@ -9,11 +9,17 @@ description = "100% pure-Rust implementation of pymupdf4llm for LLM/RAG PDF-to-M
 keywords = ["pdf", "markdown", "llm", "rag", "pymupdf4llm"]
 categories = ["parsing", "text-processing", "asynchronous"]
 
+[lib]
+name = "pymupdf4llm_rs"
+crate-type = ["cdylib", "rlib"]
+
 [features]
 default = ["async", "cli", "images"]
 async = ["dep:tokio", "dep:futures"]
 cli = ["dep:clap", "async"]
 images = ["dep:image"]
+python = ["dep:pyo3", "async"]
+extension-module = ["python", "pyo3/extension-module"]
 
 [dependencies]
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
@@ -30,6 +36,7 @@ tokio = { version = "1.43", features = ["rt-multi-thread", "sync", "fs", "io-uti
 futures = { version = "0.3", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"], optional = true }
 clap = { version = "4.5", features = ["derive"], optional = true }
+pyo3 = { version = "0.23", features = ["abi3-py39"], optional = true }
 
 [[bin]]
 name = "pymupdf4llm"

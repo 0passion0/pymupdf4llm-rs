@@ -37,13 +37,36 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy lints
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --features "async,cli,images" -- -D warnings
 
       - name: Run unit & compatibility tests
-        run: cargo test --all-features
+        run: cargo test --features "async,cli,images"
 
       - name: Check feature combinations
         run: |
           cargo check --no-default-features
           cargo check --no-default-features --features async
-          cargo check --all-features
+          cargo check --features "async,cli,images"
+
+  python-pyo3:
+    name: Build & Test Python Package (PyO3 + maturin)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin and pytest
+        run: pip install --upgrade pip maturin pytest
+
+      - name: Build extension module & run pytest
+        run: |
+          maturin develop --release
+          pytest -v tests/test_python_api.py

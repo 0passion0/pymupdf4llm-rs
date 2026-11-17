@@ -16,6 +16,9 @@ pub mod text_cleaner;
 #[cfg(feature = "async")]
 pub mod async_engine;
 
+#[cfg(feature = "python")]
+mod python;
+
 use std::path::Path;
 use std::sync::Arc;
 use rayon::prelude::*;

@@ -3,6 +3,17 @@
 **/*.rs.bk
 *.pdb
 
+# Python / Maturin
+*.so
+*.pyd
+*.whl
+__pycache__/
+.pytest_cache/
+.venv/
+*.egg-info/
+python/pymupdf4llm_rs/*.so
+python/pymupdf4llm_rs/*.pyd
+
 # AI Studio Runtime Bridge (not required when consuming Rust crate)
 node_modules/
 dist/

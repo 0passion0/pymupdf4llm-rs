@@ -12,27 +12,49 @@ function App() {
               pymupdf4llm-rs
             </h1>
             <p className="mt-1 text-sm text-slate-600">
-              100% Pure-Rust PDF-to-Markdown Crate &amp; CLI (`Cargo.toml` + `src/` + `tests/`)
+              100% Pure-Rust PDF-to-Markdown Core + Reusable Python Binding (PyO3 / maturin)
             </p>
           </div>
           <a
             href="/api/crate/download"
             className="inline-flex min-h-10 items-center rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-800 whitespace-nowrap shrink-0"
           >
-            Download Crate (.tar.gz)
+            Download Source (.tar.gz)
           </a>
         </div>
 
         <div className="mt-6 space-y-5 text-sm text-slate-700">
           <div>
             <h2 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
-              Web Server Global Singleton Call (`PdfEngine::global`)
+              Python Reusable Class (PdfExtractor + ParsedPdf, GIL Released)
+            </h2>
+            <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-100">
+{`from pymupdf4llm_rs import PdfExtractor
+
+# Instantiate once: holds Arc<PdfEngine>, bounded semaphores, & CMap cache
+extractor = PdfExtractor(
+    table_strategy="lines_strict",
+    clean_mojibake=True,
+    max_concurrent_docs=4,
+    max_concurrent_pages=8,
+    max_pdf_bytes=64 * 1024 * 1024,
+)
+
+# Reuse across requests or parse once for multiple views
+md = extractor.to_markdown_bytes(pdf_bytes)
+with extractor.open(pdf_bytes) as doc:
+    chunks = doc.to_chunks(extract_words=True)
+    plain = doc.to_text()`}
+            </pre>
+          </div>
+
+          <div>
+            <h2 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+              Rust Global Singleton (PdfEngine::global)
             </h2>
             <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-100">
 {`use pymupdf4llm_rs::{PdfEngine, ToMarkdownOptions};
 
-// Shared across all HTTP handlers: bounds in-flight docs/pages globally
-// and reuses parsed Type0 CJK ToUnicode CMaps via content hash.
 let output = PdfEngine::global()
     .extract_bytes(pdf_bytes, ToMarkdownOptions::default())
     .await?;`}
@@ -41,11 +63,11 @@ let output = PdfEngine::global()
 
           <div>
             <h2 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
-              CLI &amp; Rust Tests
+              Build &amp; Test Commands
             </h2>
             <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-100">
-{`cargo test --all-features
-cargo run --release --features cli -- paper.pdf --page-chunks --concurrency 8`}
+{`maturin develop --release && pytest -v tests/test_python_api.py
+cargo test --features "async,cli,images"`}
             </pre>
           </div>
         </div>

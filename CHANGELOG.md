@@ -21,8 +21,10 @@ All notable changes to `pymupdf4llm-rs` are documented in this file.
 - **Algorithms & Performance**:
   - Added 2D `SpatialGrid` for $O(1)$ average-case link attachment and table cell span assignment.
   - Added `UnionFind` (DSU) connected components to isolate multiple independent tables per page and cluster vector graphics.
-- **Repository Structure**:
-  - Promoted `pymupdf4llm-rs` to repository root as a standalone pure-Rust library + CLI crate.
+- **Repository Structure & Python Package (`PyO3` + `maturin`)**:
+  - Promoted `pymupdf4llm-rs` to repository root as a standalone pure-Rust library + CLI crate + Python wheel (`abi3-py39`).
+  - Added reusable `PdfExtractor` and parse-once `ParsedPdf` Python classes holding shared `Arc<PdfEngine>`, `Arc<ToMarkdownOptions>`, Tokio runtime, global `ToUnicode` CMap cache, and `max_pdf_bytes` / `max_pages` safety guards with GIL release (`py.allow_threads`).
+  - Enforced 64 MB decompression-bomb limits across `FlateDecode`, `LZWDecode`, `ASCII85Decode`, and `RunLengthDecode`.
 
 ### 简体中文
 - **PDF 格式与文字编码兼容性扩展**：
