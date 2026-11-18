@@ -1,0 +1,5 @@
+{
+  "name": "pymupdf4llm-rs",
+  "description": "100% pure-Rust pymupdf4llm PDF-to-Markdown library & CLI tool with Tokio + Rayon high concurrency.",
+  "requestFramePermissions": []
+}
