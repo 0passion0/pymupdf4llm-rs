@@ -117,13 +117,15 @@ pub fn decode_pdf_text_string(bytes: &[u8]) -> String {
     if let Ok(utf8) = std::str::from_utf8(bytes) {
         return utf8.to_string();
     }
-    bytes.iter().map(|&b| pdf_doc_encoding_byte_to_char(b)).collect()
+    bytes
+        .iter()
+        .map(|&b| pdf_doc_encoding_byte_to_char(b))
+        .collect()
 }
 
 const PDF_DOC_HIGH: [char; 33] = [
-    '•', '†', '‡', '…', '—', '–', 'ƒ', '⁄', '‹', '›', '−', '‰', '„', '“', '”', '‘',
-    '’', '‚', '™', 'ﬁ', 'ﬂ', 'Ł', 'Œ', 'Š', 'Ÿ', 'Ž', 'ı', 'ł', 'œ', 'š', 'ž', '\u{FFFD}',
-    '€',
+    '•', '†', '‡', '…', '—', '–', 'ƒ', '⁄', '‹', '›', '−', '‰', '„', '“', '”', '‘', '’', '‚', '™',
+    'ﬁ', 'ﬂ', 'Ł', 'Œ', 'Š', 'Ÿ', 'Ž', 'ı', 'ł', 'œ', 'š', 'ž', '\u{FFFD}', '€',
 ];
 
 #[inline]

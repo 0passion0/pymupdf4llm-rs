@@ -12,9 +12,24 @@ use crate::text_cleaner::{should_dehyphenate_join, HygieneStats};
 
 #[derive(Debug, Clone)]
 enum FlowBlock {
-    Table { y: f32, x0: f32, x1: f32, markdown: String },
-    Line { y: f32, x0: f32, x1: f32, line: TextLine },
-    Image { y: f32, x0: f32, x1: f32, markdown: String },
+    Table {
+        y: f32,
+        x0: f32,
+        x1: f32,
+        markdown: String,
+    },
+    Line {
+        y: f32,
+        x0: f32,
+        x1: f32,
+        line: TextLine,
+    },
+    Image {
+        y: f32,
+        x0: f32,
+        x1: f32,
+        markdown: String,
+    },
 }
 
 pub fn build_page_chunk(
@@ -61,7 +76,11 @@ pub fn build_page_chunk(
             let display_path = if options.image_path.as_os_str().is_empty() {
                 file_name.clone()
             } else {
-                options.image_path.join(&file_name).to_string_lossy().into_owned()
+                options
+                    .image_path
+                    .join(&file_name)
+                    .to_string_lossy()
+                    .into_owned()
             };
             format!("![]({})", display_path)
         } else {
@@ -117,10 +136,14 @@ pub fn build_page_chunk(
 
     media_blocks.sort_by(|a, b| {
         let ya = match a {
-            FlowBlock::Table { y, .. } | FlowBlock::Line { y, .. } | FlowBlock::Image { y, .. } => *y,
+            FlowBlock::Table { y, .. } | FlowBlock::Line { y, .. } | FlowBlock::Image { y, .. } => {
+                *y
+            }
         };
         let yb = match b {
-            FlowBlock::Table { y, .. } | FlowBlock::Line { y, .. } | FlowBlock::Image { y, .. } => *y,
+            FlowBlock::Table { y, .. } | FlowBlock::Line { y, .. } | FlowBlock::Image { y, .. } => {
+                *y
+            }
         };
         ya.total_cmp(&yb)
     });
@@ -354,7 +377,10 @@ fn render_flow_blocks(
     out
 }
 
-fn format_single_styled_span(s: &TextSpan, options: &ToMarkdownOptions) -> (String, String, String) {
+fn format_single_styled_span(
+    s: &TextSpan,
+    options: &ToMarkdownOptions,
+) -> (String, String, String) {
     let raw = &s.text;
     let trimmed = raw.trim();
     if trimmed.is_empty() {

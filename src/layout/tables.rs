@@ -42,9 +42,19 @@ struct TableLine {
 impl TableLine {
     fn padded_bbox(&self, pad: f32) -> Rect {
         if self.is_horiz {
-            Rect::new(self.start - pad, self.coord - pad, self.end + pad, self.coord + pad)
+            Rect::new(
+                self.start - pad,
+                self.coord - pad,
+                self.end + pad,
+                self.coord + pad,
+            )
         } else {
-            Rect::new(self.coord - pad, self.start - pad, self.coord + pad, self.end + pad)
+            Rect::new(
+                self.coord - pad,
+                self.start - pad,
+                self.coord + pad,
+                self.end + pad,
+            )
         }
     }
 }
@@ -84,10 +94,30 @@ fn detect_line_tables(
     if include_filled_rects {
         for r in &page.rects {
             if r.is_filled && r.rect.width() >= 12.0 && r.rect.height() >= 8.0 {
-                lines.push(TableLine { is_horiz: true, coord: r.rect.y0, start: r.rect.x0, end: r.rect.x1 });
-                lines.push(TableLine { is_horiz: true, coord: r.rect.y1, start: r.rect.x0, end: r.rect.x1 });
-                lines.push(TableLine { is_horiz: false, coord: r.rect.x0, start: r.rect.y0, end: r.rect.y1 });
-                lines.push(TableLine { is_horiz: false, coord: r.rect.x1, start: r.rect.y0, end: r.rect.y1 });
+                lines.push(TableLine {
+                    is_horiz: true,
+                    coord: r.rect.y0,
+                    start: r.rect.x0,
+                    end: r.rect.x1,
+                });
+                lines.push(TableLine {
+                    is_horiz: true,
+                    coord: r.rect.y1,
+                    start: r.rect.x0,
+                    end: r.rect.x1,
+                });
+                lines.push(TableLine {
+                    is_horiz: false,
+                    coord: r.rect.x0,
+                    start: r.rect.y0,
+                    end: r.rect.y1,
+                });
+                lines.push(TableLine {
+                    is_horiz: false,
+                    coord: r.rect.x1,
+                    start: r.rect.y0,
+                    end: r.rect.y1,
+                });
             }
         }
     }
@@ -120,8 +150,16 @@ fn detect_line_tables(
     let mut detected = Vec::new();
 
     for comp in components.into_values() {
-        let h_coords: Vec<f32> = comp.iter().filter(|l| l.is_horiz).map(|l| l.coord).collect();
-        let v_coords: Vec<f32> = comp.iter().filter(|l| !l.is_horiz).map(|l| l.coord).collect();
+        let h_coords: Vec<f32> = comp
+            .iter()
+            .filter(|l| l.is_horiz)
+            .map(|l| l.coord)
+            .collect();
+        let v_coords: Vec<f32> = comp
+            .iter()
+            .filter(|l| !l.is_horiz)
+            .map(|l| l.coord)
+            .collect();
         if h_coords.len() < 2 || v_coords.len() < 2 {
             continue;
         }
@@ -179,14 +217,10 @@ fn lines_connect(a: &TableLine, b: &TableLine, tol: f32) -> bool {
                 && b.coord <= a.end + tol
         }
         (true, true) => {
-            (a.coord - b.coord).abs() <= tol
-                && a.start <= b.end + tol
-                && a.end >= b.start - tol
+            (a.coord - b.coord).abs() <= tol && a.start <= b.end + tol && a.end >= b.start - tol
         }
         (false, false) => {
-            (a.coord - b.coord).abs() <= tol
-                && a.start <= b.end + tol
-                && a.end >= b.start - tol
+            (a.coord - b.coord).abs() <= tol && a.start <= b.end + tol && a.end >= b.start - tol
         }
     }
 }

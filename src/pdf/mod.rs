@@ -4,9 +4,9 @@ pub mod font;
 pub mod objects;
 pub mod parser;
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 
 use crate::config::{Rect, ToMarkdownOptions};
 use crate::error::Result;

@@ -7,8 +7,7 @@ use crate::pdf::font::PdfFont;
 use crate::pdf::objects::PdfObject;
 use crate::pdf::parser::decode_stream_bytes;
 use crate::pdf::{
-    LinkAnnotation, ParsedPage, PdfDocument, RawImagePlacement, TextSpan, VectorRect,
-    VectorSegment,
+    LinkAnnotation, ParsedPage, PdfDocument, RawImagePlacement, TextSpan, VectorRect, VectorSegment,
 };
 
 #[derive(Debug, Clone)]
@@ -106,9 +105,7 @@ pub fn extract_page(
         raw_crop_box
     };
 
-    let mut resources = inherited
-        .map(|p| p.resources.clone())
-        .unwrap_or_default();
+    let mut resources = inherited.map(|p| p.resources.clone()).unwrap_or_default();
     if let Some(page_res) = page_dict
         .get("Resources")
         .and_then(|r| doc.resolve(r))
@@ -150,7 +147,12 @@ pub fn extract_page(
     );
 
     if rotation != 0 {
-        normalize_page_rotation(&mut page, raw_crop_box.width(), raw_crop_box.height(), rotation);
+        normalize_page_rotation(
+            &mut page,
+            raw_crop_box.width(),
+            raw_crop_box.height(),
+            rotation,
+        );
     }
 
     // Attach link annotations to overlapping spans using O(1) SpatialGrid lookup
@@ -212,11 +214,7 @@ fn merge_resource_dicts(
     }
 }
 
-fn collect_content_bytes(
-    doc: &PdfDocument,
-    obj: &PdfObject,
-    out: &mut Vec<u8>,
-) -> Result<()> {
+fn collect_content_bytes(doc: &PdfDocument, obj: &PdfObject, out: &mut Vec<u8>) -> Result<()> {
     match doc.resolve(obj) {
         Some(PdfObject::Stream { dict, data }) => {
             let decoded = decode_stream_bytes(dict, data)?;
@@ -233,7 +231,10 @@ fn collect_content_bytes(
     Ok(())
 }
 
-fn load_fonts(doc: &PdfDocument, resources: &BTreeMap<String, PdfObject>) -> HashMap<String, PdfFont> {
+fn load_fonts(
+    doc: &PdfDocument,
+    resources: &BTreeMap<String, PdfObject>,
+) -> HashMap<String, PdfFont> {
     let mut map = HashMap::new();
     let Some(font_dict) = resources
         .get("Font")
@@ -262,11 +263,7 @@ fn load_ext_gstate_alphas(
     };
     for (name, obj) in gs_dict {
         if let Some(d) = doc.resolve(obj).and_then(|o| o.as_dict()) {
-            if let Some(alpha) = d
-                .get("ca")
-                .or_else(|| d.get("CA"))
-                .and_then(|v| v.as_f32())
-            {
+            if let Some(alpha) = d.get("ca").or_else(|| d.get("CA")).and_then(|v| v.as_f32()) {
                 map.insert(name.clone(), alpha.clamp(0.0, 1.0));
             }
         }
@@ -420,7 +417,8 @@ fn interpret_content_stream(
                     }
                     "Tr" if !operands.is_empty() => {
                         let n = operands.len();
-                        gs.render_mode = (as_num(&operands[n - 1]).round() as i32).clamp(0, 7) as u8;
+                        gs.render_mode =
+                            (as_num(&operands[n - 1]).round() as i32).clamp(0, 7) as u8;
                     }
                     "Tc" if !operands.is_empty() => {
                         let n = operands.len();
@@ -475,7 +473,8 @@ fn interpret_content_stream(
                         text_matrix = line_matrix;
                     }
                     "T*" => {
-                        line_matrix = mul_matrix([1.0, 0.0, 0.0, 1.0, 0.0, -gs.leading], line_matrix);
+                        line_matrix =
+                            mul_matrix([1.0, 0.0, 0.0, 1.0, 0.0, -gs.leading], line_matrix);
                         text_matrix = line_matrix;
                     }
                     "Tj" | "'" | "\"" => {
@@ -485,7 +484,8 @@ fn interpret_content_stream(
                             gs.char_spacing = as_num(&operands[n - 2]);
                         }
                         if op == "'" || op == "\"" {
-                            line_matrix = mul_matrix([1.0, 0.0, 0.0, 1.0, 0.0, -gs.leading], line_matrix);
+                            line_matrix =
+                                mul_matrix([1.0, 0.0, 0.0, 1.0, 0.0, -gs.leading], line_matrix);
                             text_matrix = line_matrix;
                         }
                         if let Some(StreamToken::String(bytes)) = operands.last() {
@@ -516,7 +516,9 @@ fn interpret_content_stream(
                                         );
                                     }
                                     StreamToken::Number(adj) => {
-                                        let dx = (-adj / 1000.0) * gs.font_size * (gs.horiz_scale / 100.0);
+                                        let dx = (-adj / 1000.0)
+                                            * gs.font_size
+                                            * (gs.horiz_scale / 100.0);
                                         text_matrix[4] += dx * text_matrix[0];
                                         text_matrix[5] += dx * text_matrix[1];
                                     }
@@ -527,14 +529,22 @@ fn interpret_content_stream(
                     }
                     "m" if operands.len() >= 2 => {
                         let n = operands.len();
-                        let (x, y) = transform_point(gs.ctm, as_num(&operands[n - 2]), as_num(&operands[n - 1]));
+                        let (x, y) = transform_point(
+                            gs.ctm,
+                            as_num(&operands[n - 2]),
+                            as_num(&operands[n - 1]),
+                        );
                         let pt = (x, page_height - y);
                         cur_pt = Some(pt);
                         subpath_start = Some(pt);
                     }
                     "l" if operands.len() >= 2 => {
                         let n = operands.len();
-                        let (x, y) = transform_point(gs.ctm, as_num(&operands[n - 2]), as_num(&operands[n - 1]));
+                        let (x, y) = transform_point(
+                            gs.ctm,
+                            as_num(&operands[n - 2]),
+                            as_num(&operands[n - 1]),
+                        );
                         let pt = (x, page_height - y);
                         if let Some(prev) = cur_pt {
                             path_segments.push((prev, pt));
@@ -546,7 +556,11 @@ fn interpret_content_stream(
                     }
                     "c" | "v" | "y" if operands.len() >= 4 => {
                         let n = operands.len();
-                        let (x, y) = transform_point(gs.ctm, as_num(&operands[n - 2]), as_num(&operands[n - 1]));
+                        let (x, y) = transform_point(
+                            gs.ctm,
+                            as_num(&operands[n - 2]),
+                            as_num(&operands[n - 1]),
+                        );
                         cur_pt = Some((x, page_height - y));
                     }
                     "h" => {
@@ -575,7 +589,8 @@ fn interpret_content_stream(
                     }
                     "S" | "s" | "f" | "F" | "f*" | "B" | "b" | "B*" | "b*" => {
                         let is_stroked = matches!(op.as_str(), "S" | "s" | "B" | "b" | "B*" | "b*");
-                        let is_filled = matches!(op.as_str(), "f" | "F" | "f*" | "B" | "b" | "B*" | "b*");
+                        let is_filled =
+                            matches!(op.as_str(), "f" | "F" | "f*" | "B" | "b" | "B*" | "b*");
                         if matches!(op.as_str(), "s" | "b" | "b*") {
                             if let (Some(prev), Some(start)) = (cur_pt, subpath_start) {
                                 if prev != start {
@@ -590,7 +605,11 @@ fn interpret_content_stream(
                                 stroke_width: gs.line_width,
                                 is_stroked,
                                 is_filled,
-                                color_rgb: if is_stroked { gs.stroke_rgb } else { gs.fill_rgb },
+                                color_rgb: if is_stroked {
+                                    gs.stroke_rgb
+                                } else {
+                                    gs.fill_rgb
+                                },
                             });
                         }
                         for r in path_rects.drain(..) {
@@ -786,7 +805,10 @@ fn handle_xobject(
             );
             let width = dict.get("Width").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
             let height = dict.get("Height").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
-            let bpc = dict.get("BitsPerComponent").and_then(|v| v.as_i64()).unwrap_or(8) as u8;
+            let bpc = dict
+                .get("BitsPerComponent")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(8) as u8;
             let color_space = match dict.get("ColorSpace") {
                 Some(PdfObject::Name(n)) => n.clone(),
                 Some(PdfObject::Array(arr)) => arr
@@ -819,7 +841,11 @@ fn handle_xobject(
                 return;
             };
             let mut form_gs = gs.clone();
-            if let Some(arr) = dict.get("Matrix").and_then(|o| doc.resolve(o)).and_then(|o| o.as_array()) {
+            if let Some(arr) = dict
+                .get("Matrix")
+                .and_then(|o| doc.resolve(o))
+                .and_then(|o| o.as_array())
+            {
                 if arr.len() == 6 {
                     let fm = [
                         arr[0].as_f32().unwrap_or(1.0),
@@ -902,8 +928,15 @@ fn normalize_page_rotation(page: &mut ParsedPage, orig_w: f32, orig_h: f32, rota
     }
 }
 
-fn parse_rect_from_dict(doc: &PdfDocument, dict: &BTreeMap<String, PdfObject>, key: &str) -> Option<Rect> {
-    let arr = dict.get(key).and_then(|o| doc.resolve(o)).and_then(|o| o.as_array())?;
+fn parse_rect_from_dict(
+    doc: &PdfDocument,
+    dict: &BTreeMap<String, PdfObject>,
+    key: &str,
+) -> Option<Rect> {
+    let arr = dict
+        .get(key)
+        .and_then(|o| doc.resolve(o))
+        .and_then(|o| o.as_array())?;
     if arr.len() != 4 {
         return None;
     }
@@ -1240,7 +1273,12 @@ fn find_array_elem_end(data: &[u8], start: usize) -> usize {
         i
     } else {
         let mut i = start;
-        while i < data.len() && !data[i].is_ascii_whitespace() && data[i] != b']' && data[i] != b'(' && data[i] != b'<' {
+        while i < data.len()
+            && !data[i].is_ascii_whitespace()
+            && data[i] != b']'
+            && data[i] != b'('
+            && data[i] != b'<'
+        {
             i += 1;
         }
         i.max(start + 1)

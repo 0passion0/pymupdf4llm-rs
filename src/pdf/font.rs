@@ -118,9 +118,8 @@ impl PdfFont {
             || lower.contains("semibold")
             || lower.contains("demi")
             || lower.ends_with("-bd");
-        let mut is_italic = lower.contains("italic")
-            || lower.contains("oblique")
-            || lower.contains("slant");
+        let mut is_italic =
+            lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
         let mut is_monospace = lower.contains("courier")
             || lower.contains("mono")
             || lower.contains("consolas")
@@ -313,7 +312,11 @@ impl PdfFont {
                         out.push(ch);
                     }
                 }
-                total_width += self.widths.get(&code).copied().unwrap_or(self.default_width);
+                total_width += self
+                    .widths
+                    .get(&code)
+                    .copied()
+                    .unwrap_or(self.default_width);
                 i += step.max(1);
             }
             return (out, total_width, glyph_count, space_count);
@@ -333,7 +336,11 @@ impl PdfFont {
                     if (0xDC00..=0xDFFF).contains(&lo) {
                         let s = String::from_utf16_lossy(&[code as u16, lo]);
                         out.push_str(&s);
-                        total_width += self.widths.get(&code).copied().unwrap_or(self.default_width);
+                        total_width += self
+                            .widths
+                            .get(&code)
+                            .copied()
+                            .unwrap_or(self.default_width);
                         i += 4;
                         continue;
                     }
@@ -342,7 +349,11 @@ impl PdfFont {
                         out.push(ch);
                     }
                 }
-                total_width += self.widths.get(&code).copied().unwrap_or(self.default_width);
+                total_width += self
+                    .widths
+                    .get(&code)
+                    .copied()
+                    .unwrap_or(self.default_width);
                 i += 2;
             }
         } else {
@@ -361,7 +372,11 @@ impl PdfFont {
                 } else {
                     self.decode_single_byte_fallback(b, &mut out);
                 }
-                total_width += self.widths.get(&code).copied().unwrap_or(self.default_width);
+                total_width += self
+                    .widths
+                    .get(&code)
+                    .copied()
+                    .unwrap_or(self.default_width);
             }
         }
         (out, total_width, glyph_count, space_count)

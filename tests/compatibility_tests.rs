@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use pymupdf4llm_rs::{
     to_markdown, HeaderMode, MarkdownOutput, PdfDocument, TableStrategy, ToMarkdownOptions,
 };
+use std::sync::Arc;
 
 /// Constructs a minimal valid binary PDF in-memory for pure-Rust verification.
 fn build_synthetic_pdf() -> Vec<u8> {
@@ -227,7 +227,10 @@ async fn test_async_concurrent_execution() {
         )
         .await
         .unwrap();
-    assert!(global_out.as_text().unwrap().contains("# 1. Rust PDF Architecture"));
+    assert!(global_out
+        .as_text()
+        .unwrap()
+        .contains("# 1. Rust PDF Architecture"));
 }
 
 #[test]
@@ -385,8 +388,7 @@ fn test_extended_cmap_encodings_inline_images_and_metadata() {
         pdf.as_slice(),
         ToMarkdownOptions::builder().page_chunks(true).build(),
     )
-    .unwrap()
-    else {
+    .unwrap() else {
         panic!("expected chunks");
     };
     let chunk = &chunks[0];
@@ -394,7 +396,11 @@ fn test_extended_cmap_encodings_inline_images_and_metadata() {
     assert!(chunk.text.contains("ABC中"), "got: {}", chunk.text);
     assert!(chunk.text.contains("Café fifl"), "got: {}", chunk.text);
     assert!(chunk.text.contains("✓"), "got: {}", chunk.text);
-    assert!(chunk.text.contains("After inline image"), "got: {}", chunk.text);
+    assert!(
+        chunk.text.contains("After inline image"),
+        "got: {}",
+        chunk.text
+    );
     assert!(!chunk.text.contains("FAKE_TJ"), "got: {}", chunk.text);
 }
 
@@ -496,18 +502,32 @@ fn test_cycles_inherited_nested_resources_indirect_length_paths_and_spatial_guar
     grid.insert(1, Rect::new(-1e9, -1e9, 1e9, 1e9));
     grid.insert(2, Rect::new(10.0, 10.0, 50.0, 50.0));
     assert_eq!(grid.query_rect(Rect::new(0.0, 0.0, 60.0, 60.0)), vec![2]);
-    assert!(grid.query_rect(Rect::new(f32::INFINITY, 0.0, 10.0, 10.0)).is_empty());
+    assert!(grid
+        .query_rect(Rect::new(f32::INFINITY, 0.0, 10.0, 10.0))
+        .is_empty());
     assert!(grid.query_point(f32::NAN, 10.0).is_empty());
 
     // 2. Compound underscore glyph names & extended math glyph names
-    assert_eq!(glyph_name_to_unicode("T_h", "Helvetica").as_deref(), Some("Th"));
-    assert_eq!(glyph_name_to_unicode("T_h.liga", "Helvetica").as_deref(), Some("Th"));
+    assert_eq!(
+        glyph_name_to_unicode("T_h", "Helvetica").as_deref(),
+        Some("Th")
+    );
+    assert_eq!(
+        glyph_name_to_unicode("T_h.liga", "Helvetica").as_deref(),
+        Some("Th")
+    );
     assert_eq!(
         glyph_name_to_unicode("uni0041_uni0042", "Helvetica").as_deref(),
         Some("AB")
     );
-    assert_eq!(glyph_name_to_unicode("equivalence", "Symbol").as_deref(), Some("≡"));
-    assert_eq!(glyph_name_to_unicode("emptyset", "Symbol").as_deref(), Some("∅"));
+    assert_eq!(
+        glyph_name_to_unicode("equivalence", "Symbol").as_deref(),
+        Some("≡")
+    );
+    assert_eq!(
+        glyph_name_to_unicode("emptyset", "Symbol").as_deref(),
+        Some("∅")
+    );
 
     // 3. Surrogate-pair sequential bfrange & invalid 8-hex guard
     let surr_cmap = parse_tounicode_cmap(
@@ -585,10 +605,18 @@ fn test_cycles_inherited_nested_resources_indirect_length_paths_and_spatial_guar
         parsed_page.segments
     );
 
-    let MarkdownOutput::Text(md) = to_markdown(pdf.as_slice(), ToMarkdownOptions::default()).unwrap() else {
+    let MarkdownOutput::Text(md) =
+        to_markdown(pdf.as_slice(), ToMarkdownOptions::default()).unwrap()
+    else {
         panic!("expected text");
     };
-    assert!(md.contains("A"), "ToUnicode <0000> should fall back to 'A', got: {md}");
+    assert!(
+        md.contains("A"),
+        "ToUnicode <0000> should fall back to 'A', got: {md}"
+    );
     assert!(md.contains("**Inherited+Page**"), "got: {md}");
-    assert!(md.contains("Δαβ"), "implicit Symbol encoding failed, got: {md}");
+    assert!(
+        md.contains("Δαβ"),
+        "implicit Symbol encoding failed, got: {md}"
+    );
 }

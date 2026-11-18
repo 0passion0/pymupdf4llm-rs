@@ -66,7 +66,8 @@ jobs:
       - name: Install maturin and pytest
         run: pip install --upgrade pip maturin pytest
 
-      - name: Build extension module & run pytest
+      - name: Build extension wheel & run pytest
         run: |
-          maturin develop --release
+          maturin build --release --out dist --find-interpreter
+          pip install --force-reinstall dist/*.whl
           pytest -v tests/test_python_api.py

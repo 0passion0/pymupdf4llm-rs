@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use crate::config::TextHygieneConfig;
 use crate::pdf::TextSpan;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct HygieneStats {
@@ -15,7 +15,11 @@ pub struct HygieneStats {
 
 /// Maps known Symbol / Wingdings PUA codepoints to standard Unicode, expands typographic ligatures,
 /// strips control bytes, zero-width noise, and unmapped PUA/replacement glyphs.
-pub fn sanitize_span_text(input: &str, cfg: &TextHygieneConfig, stats: &mut HygieneStats) -> String {
+pub fn sanitize_span_text(
+    input: &str,
+    cfg: &TextHygieneConfig,
+    stats: &mut HygieneStats,
+) -> String {
     if !cfg.clean_mojibake {
         return input.to_string();
     }
@@ -23,12 +27,30 @@ pub fn sanitize_span_text(input: &str, cfg: &TextHygieneConfig, stats: &mut Hygi
     for ch in input.chars() {
         match ch {
             // Known typographic ligatures
-            '\u{FB00}' => { out.push_str("ff"); stats.ligatures_expanded += 1; }
-            '\u{FB01}' => { out.push_str("fi"); stats.ligatures_expanded += 1; }
-            '\u{FB02}' => { out.push_str("fl"); stats.ligatures_expanded += 1; }
-            '\u{FB03}' => { out.push_str("ffi"); stats.ligatures_expanded += 1; }
-            '\u{FB04}' => { out.push_str("ffl"); stats.ligatures_expanded += 1; }
-            '\u{FB05}' | '\u{FB06}' => { out.push_str("st"); stats.ligatures_expanded += 1; }
+            '\u{FB00}' => {
+                out.push_str("ff");
+                stats.ligatures_expanded += 1;
+            }
+            '\u{FB01}' => {
+                out.push_str("fi");
+                stats.ligatures_expanded += 1;
+            }
+            '\u{FB02}' => {
+                out.push_str("fl");
+                stats.ligatures_expanded += 1;
+            }
+            '\u{FB03}' => {
+                out.push_str("ffi");
+                stats.ligatures_expanded += 1;
+            }
+            '\u{FB04}' => {
+                out.push_str("ffl");
+                stats.ligatures_expanded += 1;
+            }
+            '\u{FB05}' | '\u{FB06}' => {
+                out.push_str("st");
+                stats.ligatures_expanded += 1;
+            }
             // Non-breaking / exotic spaces -> standard space
             '\u{00A0}' | '\u{2002}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => {
                 out.push(' ');
@@ -75,7 +97,12 @@ pub fn filter_and_dedup_spans(
             let upper = span.text.trim().to_ascii_uppercase();
             if matches!(
                 upper.as_str(),
-                "CONFIDENTIAL" | "DRAFT" | "WATERMARK" | "DO NOT DISTRIBUTE" | "SAMPLE" | "INTERNAL USE ONLY"
+                "CONFIDENTIAL"
+                    | "DRAFT"
+                    | "WATERMARK"
+                    | "DO NOT DISTRIBUTE"
+                    | "SAMPLE"
+                    | "INTERNAL USE ONLY"
             ) {
                 stats.watermarks_filtered += 1;
                 continue;
@@ -131,7 +158,13 @@ pub fn detect_running_headers_footers(
 pub fn normalize_running_signature(text: &str) -> String {
     text.trim()
         .chars()
-        .map(|c| if c.is_ascii_digit() { '#' } else { c.to_ascii_lowercase() })
+        .map(|c| {
+            if c.is_ascii_digit() {
+                '#'
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()

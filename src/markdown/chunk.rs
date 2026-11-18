@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::text_cleaner::HygieneStats;
+use serde::{Deserialize, Serialize};
 
 /// Matches `doc.get_toc()` entry: `(level, title, page_1based)`
 pub type TocItem = (usize, String, usize);

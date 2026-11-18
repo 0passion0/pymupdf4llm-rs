@@ -1,6 +1,6 @@
+use flate2::read::{DeflateDecoder, ZlibDecoder};
 use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
-use flate2::read::{DeflateDecoder, ZlibDecoder};
 
 use crate::config::Rect;
 use crate::error::{PdfError, Result};
@@ -11,8 +11,7 @@ use crate::pdf::{DocumentMetadata, InheritedPageProps, PdfDocument};
 const MAX_TREE_DEPTH: usize = 64;
 
 pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
-    let header_pos = find_subsequence(bytes, b"%PDF-")
-        .ok_or(PdfError::InvalidHeader)?;
+    let header_pos = find_subsequence(bytes, b"%PDF-").ok_or(PdfError::InvalidHeader)?;
     let version_end = bytes[header_pos + 5..]
         .iter()
         .position(|&b| b == b'\r' || b == b'\n' || b == b' ')
@@ -70,7 +69,11 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
             if dict.get("Type").and_then(|v| v.as_name()) == Some("ObjStm") {
                 if let Ok(decompressed) = decode_stream_bytes(dict, data) {
                     let n = dict.get("N").and_then(|v| v.as_i64()).unwrap_or(0).max(0) as usize;
-                    let first = dict.get("First").and_then(|v| v.as_i64()).unwrap_or(0).max(0) as usize;
+                    let first = dict
+                        .get("First")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0)
+                        .max(0) as usize;
                     collect_object_stream_entries(&decompressed, n, first, &mut unpacked_entries);
                 }
             }
@@ -155,13 +158,14 @@ fn collect_page_tree(
         .and_then(|v| v.as_reference())
         .ok_or_else(|| PdfError::InvalidXref("Missing /Root catalog in trailer".into()))?;
 
-    let catalog = objects
-        .get(&root_ref.0)
-        .and_then(|o| o.as_dict())
-        .ok_or(PdfError::MissingObject {
-            obj_num: root_ref.0,
-            gen_num: root_ref.1,
-        })?;
+    let catalog =
+        objects
+            .get(&root_ref.0)
+            .and_then(|o| o.as_dict())
+            .ok_or(PdfError::MissingObject {
+                obj_num: root_ref.0,
+                gen_num: root_ref.1,
+            })?;
 
     let pages_ref = catalog
         .get("Pages")
@@ -221,7 +225,10 @@ fn walk_pages_node(
     let Some(dict) = objects.get(&node_ref.0).and_then(|o| o.as_dict()) else {
         return;
     };
-    if let Some(mb) = dict.get("MediaBox").and_then(|o| parse_rect_raw(objects, o)) {
+    if let Some(mb) = dict
+        .get("MediaBox")
+        .and_then(|o| parse_rect_raw(objects, o))
+    {
         parent_props.media_box = Some(mb);
     }
     if let Some(cb) = dict.get("CropBox").and_then(|o| parse_rect_raw(objects, o)) {
@@ -236,7 +243,10 @@ fn walk_pages_node(
         .and_then(|o| o.as_dict())
     {
         for (k, v) in res_dict {
-            match (parent_props.resources.get_mut(k), resolve_obj_map(objects, v)) {
+            match (
+                parent_props.resources.get_mut(k),
+                resolve_obj_map(objects, v),
+            ) {
                 (Some(PdfObject::Dict(existing)), Some(PdfObject::Dict(overlay))) => {
                     for (sk, sv) in overlay {
                         existing.insert(sk.clone(), sv.clone());
@@ -296,14 +306,38 @@ fn extract_metadata(
     let Some(info) = objects.get(&info_ref.0).and_then(|o| o.as_dict()) else {
         return meta;
     };
-    meta.title = info.get("Title").and_then(|v| v.as_text_string()).unwrap_or_default();
-    meta.author = info.get("Author").and_then(|v| v.as_text_string()).unwrap_or_default();
-    meta.subject = info.get("Subject").and_then(|v| v.as_text_string()).unwrap_or_default();
-    meta.keywords = info.get("Keywords").and_then(|v| v.as_text_string()).unwrap_or_default();
-    meta.creator = info.get("Creator").and_then(|v| v.as_text_string()).unwrap_or_default();
-    meta.producer = info.get("Producer").and_then(|v| v.as_text_string()).unwrap_or_default();
-    meta.creation_date = info.get("CreationDate").and_then(|v| v.as_text_string()).unwrap_or_default();
-    meta.mod_date = info.get("ModDate").and_then(|v| v.as_text_string()).unwrap_or_default();
+    meta.title = info
+        .get("Title")
+        .and_then(|v| v.as_text_string())
+        .unwrap_or_default();
+    meta.author = info
+        .get("Author")
+        .and_then(|v| v.as_text_string())
+        .unwrap_or_default();
+    meta.subject = info
+        .get("Subject")
+        .and_then(|v| v.as_text_string())
+        .unwrap_or_default();
+    meta.keywords = info
+        .get("Keywords")
+        .and_then(|v| v.as_text_string())
+        .unwrap_or_default();
+    meta.creator = info
+        .get("Creator")
+        .and_then(|v| v.as_text_string())
+        .unwrap_or_default();
+    meta.producer = info
+        .get("Producer")
+        .and_then(|v| v.as_text_string())
+        .unwrap_or_default();
+    meta.creation_date = info
+        .get("CreationDate")
+        .and_then(|v| v.as_text_string())
+        .unwrap_or_default();
+    meta.mod_date = info
+        .get("ModDate")
+        .and_then(|v| v.as_text_string())
+        .unwrap_or_default();
     meta
 }
 
@@ -577,9 +611,21 @@ fn apply_predictor(parms: &BTreeMap<String, PdfObject>, data: &[u8]) -> Option<V
     if predictor <= 1 {
         return None;
     }
-    let cols = parms.get("Columns").and_then(|v| v.as_i64()).unwrap_or(1).clamp(1, 1_000_000) as usize;
-    let bpc = parms.get("BitsPerComponent").and_then(|v| v.as_i64()).unwrap_or(8).clamp(1, 32) as usize;
-    let colors = parms.get("Colors").and_then(|v| v.as_i64()).unwrap_or(1).clamp(1, 64) as usize;
+    let cols = parms
+        .get("Columns")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1)
+        .clamp(1, 1_000_000) as usize;
+    let bpc = parms
+        .get("BitsPerComponent")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(8)
+        .clamp(1, 32) as usize;
+    let colors = parms
+        .get("Colors")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1)
+        .clamp(1, 64) as usize;
     let bpp = colors.saturating_mul(bpc).div_ceil(8).max(1);
     let row_bytes = cols.saturating_mul(colors).saturating_mul(bpc).div_ceil(8);
     if row_bytes == 0 || row_bytes > MAX_DECOMPRESSED_STREAM_BYTES {
@@ -894,7 +940,10 @@ impl<'a> Lexer<'a> {
                         self.pos += 1;
                     }
                     let stream_start = self.pos;
-                    let length = dict.get("Length").and_then(|v| v.as_i64()).map(|l| l.max(0) as usize);
+                    let length = dict
+                        .get("Length")
+                        .and_then(|v| v.as_i64())
+                        .map(|l| l.max(0) as usize);
                     let mut trim_eol = false;
                     let stream_end = if let Some(len) = length {
                         if stream_start + len <= self.data.len() {

@@ -174,7 +174,8 @@ fn group_spans_into_lines(spans: &[TextSpan]) -> Vec<TextLine> {
     for span in spans {
         if let Some(last) = lines.last_mut() {
             let ref_y = last[0].origin.1;
-            let same_baseline = (span.origin.1 - ref_y).abs() <= (last[0].font_size * 0.45).max(3.5);
+            let same_baseline =
+                (span.origin.1 - ref_y).abs() <= (last[0].font_size * 0.45).max(3.5);
             let same_column = last.last().is_some_and(|prev_span| {
                 (span.bbox.x0 - prev_span.bbox.x1).abs() < 120.0
                     || span.bbox.x0 >= prev_span.bbox.x0 - 4.0
@@ -208,7 +209,10 @@ fn group_spans_into_lines(spans: &[TextSpan]) -> Vec<TextLine> {
                 }
                 if i > 0 {
                     let gap = s.bbox.x0 - line_spans[i - 1].bbox.x1;
-                    if gap > s.font_size * 0.12 && !raw_text.ends_with(' ') && !s.text.starts_with(' ') {
+                    if gap > s.font_size * 0.12
+                        && !raw_text.ends_with(' ')
+                        && !s.text.starts_with(' ')
+                    {
                         raw_text.push(' ');
                     }
                 }

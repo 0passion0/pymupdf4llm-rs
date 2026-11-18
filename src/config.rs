@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 
 use crate::layout::headers::HeaderResolver;
 
@@ -156,7 +156,10 @@ impl Rect {
 
 #[derive(Clone)]
 pub enum HeaderMode {
-    IdentifyHeaders { max_levels: usize, body_limit: Option<f32> },
+    IdentifyHeaders {
+        max_levels: usize,
+        body_limit: Option<f32>,
+    },
     TocHeaders,
     Custom(Arc<dyn HeaderResolver>),
     Disabled,
@@ -165,7 +168,10 @@ pub enum HeaderMode {
 impl std::fmt::Debug for HeaderMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::IdentifyHeaders { max_levels, body_limit } => f
+            Self::IdentifyHeaders {
+                max_levels,
+                body_limit,
+            } => f
                 .debug_struct("IdentifyHeaders")
                 .field("max_levels", max_levels)
                 .field("body_limit", body_limit)

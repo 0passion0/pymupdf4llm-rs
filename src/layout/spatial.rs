@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::config::Rect;
+use std::collections::HashMap;
 
 /// Uniform 2D spatial grid index providing O(1) average-case bounding-box intersection queries,
 /// eliminating O(N^2) span-to-link, span-to-table, and graphic-clustering scans on dense PDFs.

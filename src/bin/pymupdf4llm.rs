@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use clap::{Parser, ValueEnum};
+use std::path::PathBuf;
 
 use pymupdf4llm_rs::{
     batch_to_markdown_async, to_markdown_async, ImageFormat, MarkdownOutput, TableStrategy,
@@ -26,7 +26,10 @@ impl From<CliTableStrategy> for TableStrategy {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "pymupdf4llm", about = "Pure-Rust PDF to Markdown extractor compatible with pymupdf4llm")]
+#[command(
+    name = "pymupdf4llm",
+    about = "Pure-Rust PDF to Markdown extractor compatible with pymupdf4llm"
+)]
 struct Cli {
     /// Input PDF file(s)
     #[arg(required = true)]

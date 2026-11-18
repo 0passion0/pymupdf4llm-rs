@@ -128,19 +128,25 @@ fn extract_pdf_bytes(obj: &Bound<'_, PyAny>, max_pdf_bytes: usize) -> PyResult<V
 fn parse_margins(val: &Bound<'_, PyAny>) -> PyResult<Margins> {
     if let Ok(scalar) = val.extract::<f32>() {
         if !scalar.is_finite() || scalar < 0.0 {
-            return Err(PyValueError::new_err("margins scalar must be finite and >= 0"));
+            return Err(PyValueError::new_err(
+                "margins scalar must be finite and >= 0",
+            ));
         }
         return Ok(Margins::from(scalar));
     }
     if let Ok((h, v)) = val.extract::<(f32, f32)>() {
         if !h.is_finite() || !v.is_finite() || h < 0.0 || v < 0.0 {
-            return Err(PyValueError::new_err("margins values must be finite and >= 0"));
+            return Err(PyValueError::new_err(
+                "margins values must be finite and >= 0",
+            ));
         }
         return Ok(Margins::from((h, v)));
     }
     if let Ok((l, t, r, b)) = val.extract::<(f32, f32, f32, f32)>() {
         if ![l, t, r, b].iter().all(|x| x.is_finite() && *x >= 0.0) {
-            return Err(PyValueError::new_err("margins values must be finite and >= 0"));
+            return Err(PyValueError::new_err(
+                "margins values must be finite and >= 0",
+            ));
         }
         return Ok(Margins::from((l, t, r, b)));
     }
@@ -270,9 +276,7 @@ fn apply_option_kwargs(
                 let ph: Option<f32> = v.extract()?;
                 if let Some(val) = ph {
                     if !val.is_finite() || val <= 0.0 {
-                        return Err(PyValueError::new_err(
-                            "page_height must be finite and > 0",
-                        ));
+                        return Err(PyValueError::new_err("page_height must be finite and > 0"));
                     }
                 }
                 opts.page_height = ph;
@@ -289,7 +293,9 @@ fn apply_option_kwargs(
             "fontsize_limit" => {
                 let fl: f32 = v.extract()?;
                 if !fl.is_finite() || fl < 0.0 {
-                    return Err(PyValueError::new_err("fontsize_limit must be finite and >= 0"));
+                    return Err(PyValueError::new_err(
+                        "fontsize_limit must be finite and >= 0",
+                    ));
                 }
                 opts.fontsize_limit = fl;
             }
@@ -386,7 +392,12 @@ fn apply_option_kwargs(
     })
 }
 
-fn metadata_to_pydict<'py>(py: Python<'py>, meta: &DocumentMetadata, page_count: usize, file_path: Option<&PathBuf>) -> PyResult<Bound<'py, PyDict>> {
+fn metadata_to_pydict<'py>(
+    py: Python<'py>,
+    meta: &DocumentMetadata,
+    page_count: usize,
+    file_path: Option<&PathBuf>,
+) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("format", &meta.format)?;
     d.set_item("title", &meta.title)?;
@@ -475,18 +486,10 @@ fn chunk_to_pydict<'py>(py: Python<'py>, chunk: &PageChunk) -> PyResult<Bound<'p
     if !chunk.words.is_empty() {
         let words = PyList::new(
             py,
-            chunk.words.iter().map(|w| {
-                (
-                    w.0,
-                    w.1,
-                    w.2,
-                    w.3,
-                    w.4.as_str(),
-                    w.5,
-                    w.6,
-                    w.7,
-                )
-            }),
+            chunk
+                .words
+                .iter()
+                .map(|w| (w.0, w.1, w.2, w.3, w.4.as_str(), w.5, w.6, w.7)),
         )?;
         d.set_item("words", words)?;
     } else {
@@ -656,7 +659,11 @@ impl ParsedPdf {
     }
 
     #[pyo3(signature = (**kwargs))]
-    fn to_markdown(&self, py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
+    fn to_markdown(
+        &self,
+        py: Python<'_>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<PyObject> {
         let opts = self.resolve_opts(kwargs, None)?;
         let doc = Arc::clone(&self.doc);
         let engine = Arc::clone(&self.engine);
@@ -680,7 +687,9 @@ impl ParsedPdf {
         let engine = Arc::clone(&self.engine);
         let out = py.allow_threads(|| run_doc_extract(&engine, doc, opts))?;
         let MarkdownOutput::Chunks(chunks) = out else {
-            return Err(PyRuntimeError::new_err("Unexpected text output for to_chunks"));
+            return Err(PyRuntimeError::new_err(
+                "Unexpected text output for to_chunks",
+            ));
         };
         chunks_to_pylist(py, &chunks)
     }
@@ -966,7 +975,9 @@ impl PdfExtractor {
         let engine = Arc::clone(&self.engine);
         let out = py.allow_threads(|| run_doc_extract(&engine, doc, opts))?;
         let MarkdownOutput::Chunks(chunks) = out else {
-            return Err(PyRuntimeError::new_err("Unexpected text output for to_chunks"));
+            return Err(PyRuntimeError::new_err(
+                "Unexpected text output for to_chunks",
+            ));
         };
         chunks_to_pylist(py, &chunks)
     }
@@ -990,7 +1001,9 @@ impl PdfExtractor {
             run_doc_extract(&engine, Arc::new(doc), opts)
         })?;
         let MarkdownOutput::Chunks(chunks) = out else {
-            return Err(PyRuntimeError::new_err("Unexpected text output for to_chunks_bytes"));
+            return Err(PyRuntimeError::new_err(
+                "Unexpected text output for to_chunks_bytes",
+            ));
         };
         chunks_to_pylist(py, &chunks)
     }

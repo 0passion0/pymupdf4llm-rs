@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
-use serde::{Deserialize, Serialize};
 
 use crate::config::ToMarkdownOptions;
 use crate::error::Result;
@@ -53,7 +53,10 @@ impl LlamaMarkdownReader {
                 let mut metadata = BTreeMap::new();
                 metadata.insert("file_path".into(), serde_json::json!(c.metadata.file_path));
                 metadata.insert("page".into(), serde_json::json!(c.metadata.page));
-                metadata.insert("page_count".into(), serde_json::json!(c.metadata.page_count));
+                metadata.insert(
+                    "page_count".into(),
+                    serde_json::json!(c.metadata.page_count),
+                );
                 metadata.insert("title".into(), serde_json::json!(c.metadata.title));
                 metadata.insert("author".into(), serde_json::json!(c.metadata.author));
                 metadata.insert("toc_items".into(), serde_json::json!(c.toc_items));

@@ -19,9 +19,9 @@ pub mod async_engine;
 #[cfg(feature = "python")]
 mod python;
 
+use rayon::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
-use rayon::prelude::*;
 
 pub use config::{
     ConcurrencyConfig, HeaderMode, ImageFormat, Margins, ProgressCallback, Rect, TableStrategy,
@@ -157,7 +157,10 @@ pub fn to_text<'a>(source: impl Into<PdfSource<'a>>, options: ToMarkdownOptions)
         .join("\n\n"))
 }
 
-pub(crate) fn resolve_target_pages(doc: &PdfDocument, options: &ToMarkdownOptions) -> Result<Vec<usize>> {
+pub(crate) fn resolve_target_pages(
+    doc: &PdfDocument,
+    options: &ToMarkdownOptions,
+) -> Result<Vec<usize>> {
     let total = doc.page_count();
     match &options.pages {
         None => Ok((0..total).collect()),
@@ -312,6 +315,7 @@ pub(crate) fn process_single_page(
 ) -> Result<PageChunk> {
     let parsed_page = doc.parse_page(page_idx, options)?;
     let layout_page = layout::analyze_page_layout(&parsed_page, options);
-    let chunk = markdown::render_page_chunk(doc, &parsed_page, &layout_page, options, header_resolver);
+    let chunk =
+        markdown::render_page_chunk(doc, &parsed_page, &layout_page, options, header_resolver);
     Ok(chunk)
 }

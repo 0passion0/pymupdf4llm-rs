@@ -1,6 +1,6 @@
+use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use rayon::prelude::*;
 
 use crate::config::ToMarkdownOptions;
 use crate::error::Result;
@@ -113,7 +113,11 @@ impl HeaderResolver for IdentifyHeaders {
         }
         // Fallback if font exceeds body size by >= 1.5pt even if unseen during sampling
         if span.font_size > self.body_limit + 1.5 {
-            let level = self.header_sizes.len().saturating_add(1).min(self.max_levels);
+            let level = self
+                .header_sizes
+                .len()
+                .saturating_add(1)
+                .min(self.max_levels);
             return format!("{} ", "#".repeat(level.max(1)));
         }
         String::new()
@@ -155,7 +159,8 @@ impl HeaderResolver for TocHeaders {
             return String::new();
         }
         for (level, title) in entries {
-            if title == &norm_span || title.starts_with(&norm_span) || norm_span.starts_with(title) {
+            if title == &norm_span || title.starts_with(&norm_span) || norm_span.starts_with(title)
+            {
                 return format!("{} ", "#".repeat(*level));
             }
         }
