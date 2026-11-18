@@ -144,10 +144,12 @@ fn collect_object_stream_entries(
     }
 }
 
+type PageTreeResult = (Vec<(u32, u16)>, BTreeMap<u32, InheritedPageProps>);
+
 fn collect_page_tree(
     objects: &BTreeMap<u32, PdfObject>,
     trailer: &BTreeMap<String, PdfObject>,
-) -> Result<(Vec<(u32, u16)>, BTreeMap<u32, InheritedPageProps>)> {
+) -> Result<PageTreeResult> {
     let root_ref = trailer
         .get("Root")
         .and_then(|v| v.as_reference())
@@ -398,10 +400,10 @@ fn resolve_dest_page(
 
 const MAX_DECOMPRESSED_STREAM_BYTES: usize = 64 * 1024 * 1024;
 
-fn decode_parms_for_filter<'a>(
-    dict: &'a BTreeMap<String, PdfObject>,
+fn decode_parms_for_filter(
+    dict: &BTreeMap<String, PdfObject>,
     idx: usize,
-) -> Option<&'a BTreeMap<String, PdfObject>> {
+) -> Option<&BTreeMap<String, PdfObject>> {
     match dict.get("DecodeParms") {
         Some(PdfObject::Dict(d)) => Some(d),
         Some(PdfObject::Array(arr)) => arr.get(idx).and_then(|v| v.as_dict()),
@@ -578,8 +580,8 @@ fn apply_predictor(parms: &BTreeMap<String, PdfObject>, data: &[u8]) -> Option<V
     let cols = parms.get("Columns").and_then(|v| v.as_i64()).unwrap_or(1).clamp(1, 1_000_000) as usize;
     let bpc = parms.get("BitsPerComponent").and_then(|v| v.as_i64()).unwrap_or(8).clamp(1, 32) as usize;
     let colors = parms.get("Colors").and_then(|v| v.as_i64()).unwrap_or(1).clamp(1, 64) as usize;
-    let bpp = ((colors.saturating_mul(bpc) + 7) / 8).max(1);
-    let row_bytes = (cols.saturating_mul(colors).saturating_mul(bpc) + 7) / 8;
+    let bpp = colors.saturating_mul(bpc).div_ceil(8).max(1);
+    let row_bytes = cols.saturating_mul(colors).saturating_mul(bpc).div_ceil(8);
     if row_bytes == 0 || row_bytes > MAX_DECOMPRESSED_STREAM_BYTES {
         return None;
     }
@@ -799,9 +801,7 @@ fn scan_next_indirect_object(
 ) -> Option<(u32, u16, PdfObject, usize, usize)> {
     let mut pos = start;
     while pos < bytes.len() {
-        let Some(rel) = find_subsequence(&bytes[pos..], b"obj") else {
-            return None;
-        };
+        let rel = find_subsequence(&bytes[pos..], b"obj")?;
         let obj_kw = pos + rel;
         let prev_ok = obj_kw == 0 || bytes[obj_kw - 1].is_ascii_whitespace();
         let next_ok = obj_kw + 3 >= bytes.len()
@@ -1088,7 +1088,7 @@ impl<'a> Lexer<'a> {
                         }
                         b'\n' => {}
                         b'0'..=b'7' => {
-                            let mut oct = (esc - b'0') as u8;
+                            let mut oct = esc - b'0';
                             for _ in 0..2 {
                                 if let Some(&d @ b'0'..=b'7') = self.data.get(self.pos) {
                                     oct = oct.wrapping_mul(8).wrapping_add(d - b'0');
@@ -1126,7 +1126,7 @@ impl<'a> Lexer<'a> {
                 nibbles.push(v);
             }
         }
-        let mut out = Vec::with_capacity((nibbles.len() + 1) / 2);
+        let mut out = Vec::with_capacity(nibbles.len().div_ceil(2));
         for chunk in nibbles.chunks(2) {
             out.push((chunk[0] << 4) | chunk.get(1).copied().unwrap_or(0));
         }

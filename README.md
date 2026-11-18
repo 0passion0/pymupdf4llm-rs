@@ -20,7 +20,7 @@
   - `page_chunks = true` emitting `PageChunk` (`metadata`, `toc_items`, `tables`, `images`, `graphics`, `words`, `text`, `hygiene`).
   - `IdentifyHeaders` (character-weighted font histogram) & `TocHeaders` (`/Outlines` bookmark mapping).
   - All 4 `table_strategy` modes (`LinesStrict`, `Lines`, `Text`, `Explicit`), recursive X-Y Cut multi-column reading order, code blocks, lists, and `page_separators`.
-- **Advanced Text Hygiene & High-Performance Algorithms (`v0.4.0`)**:
+- **Advanced Text Hygiene & High-Performance Algorithms (`v0.4.1`)**:
   - **2D `SpatialGrid`** for $O(1)$ average-case hyperlink matching and table cell lookups.
   - **`UnionFind` (DSU)** connected components to isolate multiple independent tables per page and cluster vector graphics in $O(N \cdot \alpha(N))$.
   - **Broad Encoding & CJK Support**: `Type0`/CID `/W` widths, `beginbfchar` & array `beginbfrange` `ToUnicode` CMaps, `MacRomanEncoding`, `WinAnsiEncoding`, 70+ Adobe Glyph names, and `/Rotate` normalization.
@@ -81,11 +81,15 @@ let output = PdfEngine::global()
     .await?;
 ```
 
-### Python Package (`pip install` directly from GitHub)
+### Python Package (`pip install` from PyPI or GitHub)
 
-Install directly into any Python (`>= 3.9`) project via `pip` (requires Rust toolchain `rustc`/`cargo` on the build host, or download prebuilt `.whl` files from GitHub Releases with zero Rust toolchain):
+Install directly into any Python (`>= 3.9`) project via `pip` from PyPI (or from source via GitHub with a Rust toolchain `rustc`/`cargo`, or download prebuilt `.whl` files from GitHub Releases):
 
 ```bash
+# Install from PyPI (recommended)
+pip install pymupdf4llm-rs
+
+# Or install directly from GitHub
 pip install git+https://github.com/0passion0/pymupdf4llm-rs.git
 # Or pin in requirements.txt:
 # pymupdf4llm-rs @ git+https://github.com/0passion0/pymupdf4llm-rs.git@main

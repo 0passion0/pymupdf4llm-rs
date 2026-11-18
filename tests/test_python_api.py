@@ -8,11 +8,8 @@ from pathlib import Path
 
 import pytest
 
-try:
-    import pymupdf4llm_rs as pm
-    from pymupdf4llm_rs import LlamaMarkdownReader, PdfExtractor
-except ImportError as exc:
-    pytest.skip(f"Native Rust extension not built yet ({exc})", allow_module_level=True)
+import pymupdf4llm_rs as pm
+from pymupdf4llm_rs import LlamaMarkdownReader, PdfExtractor
 
 
 def build_synthetic_pdf() -> bytes:
@@ -79,7 +76,6 @@ def test_extractor_reuse_and_with_options(tmp_path: Path) -> None:
     assert extractor.options["table_strategy"] == "lines_strict"
 
     md = extractor.to_markdown(pdf_file)
-    assert isinstance(md, str)
     assert "Python Rust Hybrid Architecture" in md
     assert "**reusable engine**" in md
     assert "INVISIBLE_OCR_NOISE" not in md
@@ -109,7 +105,6 @@ def test_parsed_pdf_parse_once_and_context_manager() -> None:
         chunks = doc.to_chunks(extract_words=True)
         txt = doc.to_text()
 
-    assert isinstance(md, str)
     assert len(chunks) == 1
     assert "Python Rust Hybrid Architecture" in txt
 
@@ -159,4 +154,4 @@ def test_multithreaded_gil_release_and_batch(tmp_path: Path) -> None:
     docs = reader.load_data(files[0], extra_info={"source": "unit-test"})
     assert len(docs) == 1
     assert docs[0]["metadata"]["source"] == "unit-test"
-    assert pm.__version__ == "0.4.0"
+    assert pm.__version__ == "0.4.1"

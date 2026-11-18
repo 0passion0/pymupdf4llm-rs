@@ -4,33 +4,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::headers::HeaderResolver;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TableStrategy {
+    #[default]
     LinesStrict,
     Lines,
     Text,
     Explicit,
 }
 
-impl Default for TableStrategy {
-    fn default() -> Self {
-        Self::LinesStrict
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageFormat {
+    #[default]
     Png,
     Jpeg,
     Webp,
-}
-
-impl Default for ImageFormat {
-    fn default() -> Self {
-        Self::Png
-    }
 }
 
 impl ImageFormat {

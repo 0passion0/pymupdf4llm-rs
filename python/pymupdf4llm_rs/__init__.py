@@ -42,7 +42,7 @@ class LlamaMarkdownReader:
         chunks = self._extractor.to_chunks(file_path, **overrides)
         documents: list[dict[str, Any]] = []
         for chunk in chunks:
-            meta = dict(chunk.get("metadata", {}))
+            meta = dict(chunk["metadata"])
             if extra_info:
                 meta.update(extra_info)
             documents.append(

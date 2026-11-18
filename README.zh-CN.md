@@ -20,7 +20,7 @@
   - `page_chunks = true` 生成完整 `PageChunk`（`metadata`、`toc_items`、`tables`、`images`、`graphics`、`words`、`text`、`hygiene`）。
   - 支持 `IdentifyHeaders`（字号直方图聚类）与 `TocHeaders`（`/Outlines` 书签映射）。
   - 完整实现 4 种表格策略（`LinesStrict`、`Lines`、`Text`、`Explicit`）、递归 X-Y Cut 多栏排版、代码块、列表与 `page_separators`。
-- **深度乱码治理与高性能空间算法（`v0.4.0`）**：
+- **深度乱码治理与高性能空间算法（`v0.4.1`）**：
   - **二维 `SpatialGrid` 空间网格**：将链接匹配与表格单元查询复杂度降至均摊 $O(1)$。
   - **并查集 `UnionFind`（路径压缩 + 按秩合并）**：单页精准分离多张独立表格并在 $O(N \cdot \alpha(N))$ 时间内聚类矢量图形。
   - **更广字体与 CJK 编码兼容**：支持 `Type0`/CID `/W` 宽度、`beginbfchar` 与数组型 `beginbfrange` `ToUnicode` CMap、`MacRomanEncoding`、`WinAnsiEncoding`、70+ Adobe Glyph 字符名映射及 `/Rotate` 页面旋转归一化。
@@ -81,11 +81,15 @@ let output = PdfEngine::global()
     .await?;
 ```
 
-### Python 包安装与调用（支持直接 `pip install` GitHub 仓库）
+### Python 包安装与调用（支持 PyPI 或 GitHub 直接 `pip install`）
 
-其他 Python（`>= 3.9`）项目可直接通过 `pip` 安装使用（若部署环境无 Rust 编译器，可在 GitHub Actions 发布 Tag 后直接安装 Release 预编译 `.whl` 二进制包）：
+其他 Python（`>= 3.9`）项目可直接通过 `pip` 从 PyPI 安装使用（也可直接从 GitHub 源码安装或下载 GitHub Releases 预编译 `.whl` 二进制包）：
 
 ```bash
+# 从 PyPI 安装（推荐）
+pip install pymupdf4llm-rs
+
+# 或直接从 GitHub 安装
 pip install git+https://github.com/0passion0/pymupdf4llm-rs.git
 # 或写入 requirements.txt / pyproject.toml：
 # pymupdf4llm-rs @ git+https://github.com/0passion0/pymupdf4llm-rs.git@main

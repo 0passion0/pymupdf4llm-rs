@@ -442,8 +442,20 @@ fn interpret_content_stream(
                         let n = operands.len();
                         gs.text_rise = as_num(&operands[n - 1]);
                     }
-                    "Tm" if operands.len() >= 6 => {
-                        let m = pop_matrix(&operands);
+                    "Tm" if operands.len() >= 2 => {
+                        let m = if operands.len() >= 6 {
+                            pop_matrix(&operands)
+                        } else {
+                            let n = operands.len();
+                            [
+                                1.0,
+                                0.0,
+                                0.0,
+                                1.0,
+                                as_num(&operands[n - 2]),
+                                as_num(&operands[n - 1]),
+                            ]
+                        };
                         text_matrix = m;
                         line_matrix = m;
                     }

@@ -49,6 +49,9 @@ impl IdentifyHeaders {
                 let mut local = BTreeMap::new();
                 if let Ok(page) = doc.parse_page(idx, options) {
                     for span in page.spans {
+                        if span.is_monospace {
+                            continue;
+                        }
                         let key = (span.font_size * 10.0).round() as i32;
                         let chars = span.text.trim().chars().count();
                         if chars > 0 {
