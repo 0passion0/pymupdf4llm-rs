@@ -40,17 +40,6 @@ python-source = "python"
 module-name = "pymupdf4llm_rs._native"
 strip = true
 exclude = [
-    "node_modules/**",
     "dist/**",
-    "web/**",
-    "public/**",
-    "server.ts",
-    "package.json",
-    "bun.lock*",
-    "tsconfig.json",
-    "vite.config.ts",
-    "index.html",
-    "metadata.json",
-    ".playwright-cli/**",
     ".aistudio/**",
 ]
