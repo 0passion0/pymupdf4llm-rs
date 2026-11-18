@@ -35,7 +35,7 @@
 | **GIL Release** | Releases the Python GIL (`py.allow_threads`) across parsing and rendering for true multi-threading | Python wrappers and callbacks often contend on the GIL |
 | **Parse Once, Export Many** | `PdfExtractor` holds shared Rust pools; `ParsedPdf` (`open()`) exports MD/chunks/JSON/text from one parse | Repeated calls re-read I/O and rebuild page trees |
 | **Bounded Concurrency & Safety** | Built-in `max_pdf_bytes`, 64 MB decompression-bomb limit, `max_pages`, and Tokio semaphores | Malformed compressed streams risk OOM or unbounded thread spawning |
-| **Spatial Algorithms** | 2D `SpatialGrid` (amortized $O(1)$) + `UnionFind` (DSU) multi-table separation | $O(N^2)$ scans on dense tables and hyperlink-heavy pages |
+| **Spatial Algorithms** | 2D `SpatialGrid` (amortized `O(1)`) + `UnionFind` (DSU) multi-table separation | `O(N²)` scans on dense tables and hyperlink-heavy pages |
 | **Text Hygiene** | Built-in ligature expansion, `3 Tr` invisible OCR removal, watermark/faux-bold filtering, running header cleanup | Requires fragile custom post-processing regex pipelines |
 
 ---
