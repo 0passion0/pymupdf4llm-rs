@@ -154,4 +154,4 @@ def test_multithreaded_gil_release_and_batch(tmp_path: Path) -> None:
     docs = reader.load_data(files[0], extra_info={"source": "unit-test"})
     assert len(docs) == 1
     assert docs[0]["metadata"]["source"] == "unit-test"
-    assert pm.__version__ == "0.4.1"
+    assert pm.__version__ == "0.4.2"

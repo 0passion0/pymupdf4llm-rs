@@ -1,9 +1,41 @@
 //! # pymupdf4llm-rs
 //!
-//! 100% pure-Rust implementation of `pymupdf4llm` optimized for LLM & RAG pipelines,
-//! supporting multi-column layout ordering, vector & text table extraction (via SpatialGrid + UnionFind),
-//! font-histogram and TOC-based header identification, Unicode/mojibake hygiene cleaning,
-//! Type0/CJK ToUnicode + Form XObject + LZW decoding, and high-concurrency async execution via Tokio + Rayon.
+//! 100% 纯 Rust 实现的高性能 [`pymupdf4llm`](https://github.com/pymupdf/pymupdf4llm) PDF 转 Markdown 核心库，
+//! 专为大语言模型（LLM）与检索增强生成（RAG）文档解析管线打造，零 C/C++ 外部依赖。
+//!
+//! ## 核心能力
+//!
+//! - **多栏版面与阅读顺序**：基于递归 X-Y Cut 与二维 [`layout::spatial::SpatialGrid`] 空间索引还原自然阅读流。
+//! - **表格与标题识别**：完整支持 `LinesStrict`、`Lines`、`Text`、`Explicit` 四种表格提取策略与并查集分离，以及基于字号直方图 / `/Outlines` 书签的标题分级。
+//! - **编码与乱码治理**：支持 Type0/CID `/W`、数组型 `ToUnicode` CMap、Form XObject 递归、Pure-Rust `LZWDecode`/`FlateDecode`（64 MB 防解压炸弹上限），以及 `TextHygieneConfig` 水印/隐形 OCR/连字清洗。
+//! - **高并发调度与 Python 绑定**：支持 `async`（Tokio 信号量 + Rayon 工作窃取线程池）与 `python`（PyO3 `abi3-py39` 释放 GIL 绑定）。
+//!
+//! ## Feature Flags
+//!
+//! - `async`：启用 [`async_engine`] 异步引擎、[`PdfEngine::global`] 单例与批量并发调度（依赖 `tokio`、`futures`）。
+//! - `cli`：启用 `pymupdf4llm` 命令行可执行文件（自动开启 `async`）。
+//! - `images`：启用嵌入图像采样尺寸探测与导出支持（依赖 `image`）。
+//! - `python` / `extension-module`：启用 PyO3 原生 Python 扩展模块封装。
+//!
+//! ## 快速示例
+//!
+//! ```no_run
+//! use pymupdf4llm_rs::{to_markdown, MarkdownOutput, ToMarkdownOptions};
+//!
+//! let out = to_markdown("paper.pdf", ToMarkdownOptions::default())?;
+//! match out {
+//!     MarkdownOutput::Text(md) => println!("{md}"),
+//!     MarkdownOutput::Chunks(chunks) => println!("共解析 {} 页", chunks.len()),
+//! }
+//! # Ok::<(), pymupdf4llm_rs::PdfError>(())
+//! ```
+//!
+//! ## MSRV 与开源协议
+//!
+//! - **MSRV**：Rust `1.78`
+//! - **开源协议**：`Apache-2.0 OR MIT`
+
+#![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod config;
 pub mod error;
@@ -43,14 +75,18 @@ pub use async_engine::{
     BatchItemResult, PdfEngine,
 };
 
+/// Markdown 提取统一返回结果，对应普通全文模式或按页分块模式。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 pub enum MarkdownOutput {
+    /// 整份文档合并后的完整 Markdown 文本。
     Text(String),
+    /// 开启 `page_chunks` 后生成的逐页结构化分块列表。
     Chunks(Vec<PageChunk>),
 }
 
 impl MarkdownOutput {
+    /// 若输出为纯文本模式则返回文本切片，否则返回 `None`。
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text(s) => Some(s),
@@ -58,6 +94,7 @@ impl MarkdownOutput {
         }
     }
 
+    /// 若输出为分块模式则返回 [`PageChunk`] 切片，否则返回 `None`。
     pub fn as_chunks(&self) -> Option<&[PageChunk]> {
         match self {
             Self::Chunks(c) => Some(c),
@@ -65,6 +102,7 @@ impl MarkdownOutput {
         }
     }
 
+    /// 消费自身并统一提取为单个 Markdown 字符串（分块模式按换行拼接各页文本）。
     pub fn into_text(self) -> String {
         match self {
             Self::Text(s) => s,
@@ -77,10 +115,13 @@ impl MarkdownOutput {
     }
 }
 
-/// Input source abstraction matching pymupdf4llm's `doc` parameter (file path, bytes, or opened document).
+/// 统一输入源抽象，兼容磁盘路径、原始字节切片或已解析共享的 [`PdfDocument`]。
 pub enum PdfSource<'a> {
+    /// 本地 PDF 文件路径。
     Path(&'a Path),
+    /// 内存中的 PDF 原始字节流。
     Bytes(&'a [u8]),
+    /// 已解析并跨请求共享的 [`PdfDocument`] 引用计数句柄。
     Document(Arc<PdfDocument>),
 }
 

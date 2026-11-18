@@ -5,6 +5,30 @@ All notable changes to `pymupdf4llm-rs` are documented in this file.
 
 ---
 
+## [0.4.2] - 2026-11-18
+
+### 简体中文
+- **全平台自动构建与 PyPI 发布**：升级至 `0.4.2` 修复 PyPI 已有版本覆盖冲突，切换 macOS Runner 至 `macos-latest`，实现 Linux（x86_64/ARM64）、macOS（Intel/Apple Silicon）、Windows x64 `abi3-py39` Wheel 与 `sdist` 全自动发布。
+- **文档与代码注释规范化**：将仓库默认 `README.md` 切换为深度优化中文文档（英文版移至 `README.en.md`），遵循 `docstring-contract` 与 `rustdoc` 规范补充中文契约注释与 `#![deny(rustdoc::broken_intra_doc_links)]`。
+
+### English
+- **Multi-Platform Wheel Automation & PyPI Release**: Bumped to `0.4.2` to avoid PyPI filename collisions, migrated macOS wheel builder to `macos-latest`, and enabled full automated publishing of Linux (`x86_64`/`aarch64`), macOS (`x86_64`/`arm64`), Windows `x64` `abi3-py39` wheels, and sdist to GitHub Releases and PyPI.
+- **Documentation & Contracts**: Promoted deeply enhanced Simplified Chinese `README.md` as default (`README.en.md` for English) and added contract docstrings across Python/Rust modules.
+
+---
+
+## [0.4.1] - 2026-11-18
+
+### 简体中文
+- 修复纯等宽文本导致正文基准字号直方图失真的标题误判问题；增强 2 参数简写 `Tm` 文本矩阵兼容。
+- 完成 Rust Clippy 零警告、Python 契约边界精简与双重协议（`Apache-2.0 OR MIT`）补全，sdist 排除非核心前端/资源目录压缩至 ~100 KB。
+
+### English
+- Fixed body font histogram bias caused by monospace spans in `IdentifyHeaders` and added 2-operand `Tm` matrix fallback.
+- Passed strict Clippy checks, tightened Python contracts, updated `Apache-2.0 OR MIT` licensing, and trimmed sdist size.
+
+---
+
 ## [0.4.0] - 2026-11-16
 
 ### English
