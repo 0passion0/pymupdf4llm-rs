@@ -114,7 +114,13 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument> {
     let (page_refs, inherited_props) = if let Some(tree) = fast_path_pages {
         tree
     } else {
-        recover_objects_linear_scan(bytes, header_pos, &mut objects, &mut trailer, xref_mismatches);
+        recover_objects_linear_scan(
+            bytes,
+            header_pos,
+            &mut objects,
+            &mut trailer,
+            xref_mismatches,
+        );
 
         if is_document_encrypted(&objects, &trailer) {
             return Err(PdfError::EncryptedDocument);

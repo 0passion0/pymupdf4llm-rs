@@ -257,7 +257,7 @@ fn attach_strikethrough_and_bg(page: &mut ParsedPage) {
         for span in &mut page.spans {
             let cx = span.bbox.center_x();
             let cy = span.bbox.center_y();
-            for idx in bg_grid.query_point(cx, cy) {
+            for &idx in bg_grid.query_point(cx, cy) {
                 let (rect, rgb) = bg_rects[idx];
                 if rect.contains_point(cx, cy) {
                     span.bg_color_rgb = Some(rgb);

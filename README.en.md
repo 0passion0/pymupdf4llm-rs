@@ -74,8 +74,8 @@ pip install pymupdf4llm-rs
 # Option 2: Install directly from GitHub source (requires Rust toolchain)
 pip install git+https://github.com/0passion0/pymupdf4llm-rs.git
 
-# Option 3: Install prebuilt abi3 wheel from GitHub Releases (example: v0.4.2 Linux x86_64)
-pip install https://github.com/0passion0/pymupdf4llm-rs/releases/download/v0.4.2/pymupdf4llm_rs-0.4.2-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+# Option 3: Install prebuilt abi3 wheel from GitHub Releases (example: v0.4.3 Linux x86_64)
+pip install https://github.com/0passion0/pymupdf4llm-rs/releases/download/v0.4.3/pymupdf4llm_rs-0.4.3-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
 ```
 
 ### Rust Crate / CLI
@@ -83,7 +83,7 @@ pip install https://github.com/0passion0/pymupdf4llm-rs/releases/download/v0.4.2
 ```toml
 # Cargo.toml
 [dependencies]
-pymupdf4llm-rs = "0.4.2"
+pymupdf4llm-rs = "0.4.3"
 tokio = { version = "1", features = ["full"] }
 ```
 

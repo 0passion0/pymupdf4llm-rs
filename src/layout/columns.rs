@@ -294,7 +294,20 @@ pub(crate) fn should_insert_span_space(
     }
     if matches!(
         first_c,
-        ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '，' | '。' | '；' | '：' | '！' | '？'
+        ',' | '.'
+            | ';'
+            | ':'
+            | '!'
+            | '?'
+            | ')'
+            | ']'
+            | '}'
+            | '，'
+            | '。'
+            | '；'
+            | '：'
+            | '！'
+            | '？'
     ) {
         return gap > fs * 0.45;
     }
@@ -314,8 +327,7 @@ fn group_spans_into_lines(spans: &[TextSpan]) -> Vec<TextLine> {
                 .map(|s| s.font_size)
                 .fold(0.0f32, f32::max)
                 .max(1.0);
-            let same_baseline =
-                (span.origin.1 - ref_y).abs() <= (line_max_fs * 0.45).max(3.5);
+            let same_baseline = (span.origin.1 - ref_y).abs() <= (line_max_fs * 0.45).max(3.5);
 
             // Keep superscript/subscript/small footnote markers attached to their parent line
             let script_attached = !same_baseline

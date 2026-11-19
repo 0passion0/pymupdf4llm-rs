@@ -104,14 +104,19 @@ pub(crate) fn collect_page_tree(
         .get("Root")
         .and_then(|v| v.as_reference())
         .ok_or_else(|| PdfError::InvalidXref("Missing /Root catalog in trailer".into()))?;
-    let catalog = objects
-        .get(&root_ref.0)
-        .and_then(|o| o.as_dict())
-        .ok_or(PdfError::MissingObject {
-            obj_num: root_ref.0,
-            gen_num: root_ref.1,
-        })?;
-    if catalog.get("Pages").and_then(|v| v.as_reference()).is_none() {
+    let catalog =
+        objects
+            .get(&root_ref.0)
+            .and_then(|o| o.as_dict())
+            .ok_or(PdfError::MissingObject {
+                obj_num: root_ref.0,
+                gen_num: root_ref.1,
+            })?;
+    if catalog
+        .get("Pages")
+        .and_then(|v| v.as_reference())
+        .is_none()
+    {
         return Err(PdfError::InvalidXref("Missing /Pages in catalog".into()));
     }
     Ok((pages, inherited))
@@ -435,10 +440,10 @@ fn lookup_name_tree<'a>(
                     .and_then(|o| o.as_array())
                 {
                     if limits.len() == 2 {
-                        let lo = resolve_obj_map(objects, &limits[0])
-                            .and_then(|o| o.as_text_string());
-                        let hi = resolve_obj_map(objects, &limits[1])
-                            .and_then(|o| o.as_text_string());
+                        let lo =
+                            resolve_obj_map(objects, &limits[0]).and_then(|o| o.as_text_string());
+                        let hi =
+                            resolve_obj_map(objects, &limits[1]).and_then(|o| o.as_text_string());
                         if let (Some(lo_s), Some(hi_s)) = (lo, hi) {
                             if key < lo_s.as_str() || key > hi_s.as_str() {
                                 continue;

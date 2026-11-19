@@ -199,7 +199,10 @@ fn test_named_outline_destinations_and_full_line_toc_headers() {
 
     let pdf = build_classic_xref_pdf(b"%PDF-1.6\n", &objs, "");
     let doc = PdfDocument::from_bytes(&pdf).unwrap();
-    assert_eq!(doc.get_toc(), &[(1, "2. Methodology Overview".to_string(), 2)]);
+    assert_eq!(
+        doc.get_toc(),
+        &[(1, "2. Methodology Overview".to_string(), 2)]
+    );
 
     let opts = ToMarkdownOptions::builder()
         .hdr_info(HeaderMode::TocHeaders)
@@ -227,8 +230,9 @@ fn test_utf8_name_escapes_chained_refs_leading_zlib_garbage_and_partial_contents
     padded_zlib.extend_from_slice(&enc.finish().unwrap());
 
     let mut obj5_corrupt = Vec::new();
-    obj5_corrupt
-        .extend_from_slice(b"5 0 obj\n<< /Filter /FlateDecode /Length 4 >>\nstream\nDEAD\nendstream\nendobj\n");
+    obj5_corrupt.extend_from_slice(
+        b"5 0 obj\n<< /Filter /FlateDecode /Length 4 >>\nstream\nDEAD\nendstream\nendobj\n",
+    );
 
     let mut obj6_padded = Vec::new();
     obj6_padded.extend_from_slice(

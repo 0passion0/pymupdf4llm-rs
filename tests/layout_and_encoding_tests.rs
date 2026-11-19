@@ -1,7 +1,5 @@
 use pymupdf4llm_rs::pdf::encoding::{glyph_name_to_unicode, parse_tounicode_cmap};
-use pymupdf4llm_rs::{
-    to_markdown, MarkdownOutput, PdfDocument, TableStrategy, ToMarkdownOptions,
-};
+use pymupdf4llm_rs::{to_markdown, MarkdownOutput, PdfDocument, TableStrategy, ToMarkdownOptions};
 
 fn build_pdf(objs: &[String]) -> Vec<u8> {
     let mut pdf = Vec::new();
@@ -274,9 +272,17 @@ fn test_cjk_line_join_chinese_watermark_faux_bold_and_merged_style_runs() {
         panic!("expected chunks");
     };
     let chunk = &chunks[0];
-    assert!(chunk.text.contains("中文测试段落拼接"), "got: {}", chunk.text);
+    assert!(
+        chunk.text.contains("中文测试段落拼接"),
+        "got: {}",
+        chunk.text
+    );
     assert!(!chunk.text.contains("机密"), "got: {}", chunk.text);
-    assert!(chunk.text.contains("**Merged Bold**"), "got: {}", chunk.text);
+    assert!(
+        chunk.text.contains("**Merged Bold**"),
+        "got: {}",
+        chunk.text
+    );
     let hygiene = chunk.hygiene.as_ref().expect("hygiene");
     assert_eq!(hygiene.watermarks_filtered, 1);
     assert_eq!(hygiene.faux_bold_deduped, 1);

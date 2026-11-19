@@ -113,24 +113,12 @@ pub(super) fn handle_xobject(
             {
                 if arr.len() == 6 {
                     let fm = [
-                        doc.resolve(&arr[0])
-                            .and_then(|v| v.as_f32())
-                            .unwrap_or(1.0),
-                        doc.resolve(&arr[1])
-                            .and_then(|v| v.as_f32())
-                            .unwrap_or(0.0),
-                        doc.resolve(&arr[2])
-                            .and_then(|v| v.as_f32())
-                            .unwrap_or(0.0),
-                        doc.resolve(&arr[3])
-                            .and_then(|v| v.as_f32())
-                            .unwrap_or(1.0),
-                        doc.resolve(&arr[4])
-                            .and_then(|v| v.as_f32())
-                            .unwrap_or(0.0),
-                        doc.resolve(&arr[5])
-                            .and_then(|v| v.as_f32())
-                            .unwrap_or(0.0),
+                        doc.resolve(&arr[0]).and_then(|v| v.as_f32()).unwrap_or(1.0),
+                        doc.resolve(&arr[1]).and_then(|v| v.as_f32()).unwrap_or(0.0),
+                        doc.resolve(&arr[2]).and_then(|v| v.as_f32()).unwrap_or(0.0),
+                        doc.resolve(&arr[3]).and_then(|v| v.as_f32()).unwrap_or(1.0),
+                        doc.resolve(&arr[4]).and_then(|v| v.as_f32()).unwrap_or(0.0),
+                        doc.resolve(&arr[5]).and_then(|v| v.as_f32()).unwrap_or(0.0),
                     ];
                     form_gs.ctm = mul_matrix(fm, gs.ctm);
                 }

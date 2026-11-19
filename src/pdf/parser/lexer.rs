@@ -5,6 +5,13 @@ use crate::pdf::objects::PdfObject;
 
 const MAX_PARSE_DEPTH: usize = 64;
 
+fn is_nesting_depth_error(err: &PdfError) -> bool {
+    matches!(
+        err,
+        PdfError::Syntax { message, .. } if message.starts_with("Maximum nesting depth exceeded")
+    )
+}
+
 pub(crate) fn skip_ws_and_comments_slice(bytes: &[u8], pos: &mut usize) {
     while *pos < bytes.len() {
         let b = bytes[*pos];
@@ -360,6 +367,7 @@ impl<'a> Lexer<'a> {
                 Ok(val) => {
                     dict.insert(key, val);
                 }
+                Err(e) if is_nesting_depth_error(&e) => return Err(e),
                 Err(_) => break,
             }
         }
@@ -403,6 +411,7 @@ impl<'a> Lexer<'a> {
             }
             match self.parse_object() {
                 Ok(obj) => items.push(obj),
+                Err(e) if is_nesting_depth_error(&e) => return Err(e),
                 Err(_) => {
                     if stray_budget == 0 {
                         break;

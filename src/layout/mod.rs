@@ -61,9 +61,7 @@ pub fn analyze_page_layout(page: &ParsedPage, options: &ToMarkdownOptions) -> La
         .spans
         .iter()
         .filter_map(|s| {
-            let cx = s.bbox.center_x();
-            let cy = s.bbox.center_y();
-            if !content_bbox.contains_point(cx, cy) {
+            if !s.bbox.intersects(&content_bbox) {
                 return None;
             }
             let cleaned = sanitize_span_text(&s.text, &options.hygiene, &mut hygiene_stats);

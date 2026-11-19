@@ -299,9 +299,7 @@ fn skip_inline_image(data: &[u8], cursor: &mut usize) -> bool {
             while look < data.len() && data[look].is_ascii_whitespace() {
                 look += 1;
             }
-            let valid_follow = data
-                .get(look)
-                .map_or(true, |&b| (0x21..=0x7E).contains(&b));
+            let valid_follow = data.get(look).map_or(true, |&b| (0x21..=0x7E).contains(&b));
             if valid_follow {
                 *cursor = p + 2;
                 return true;

@@ -74,8 +74,8 @@ pip install pymupdf4llm-rs
 # 方式 2：从 GitHub 源码构建安装（需本地已配置 Rust 工具链）
 pip install git+https://github.com/0passion0/pymupdf4llm-rs.git
 
-# 方式 3：安装 GitHub Releases 预编译 Wheel（以 v0.4.2 Linux x86_64 为例）
-pip install https://github.com/0passion0/pymupdf4llm-rs/releases/download/v0.4.2/pymupdf4llm_rs-0.4.2-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+# 方式 3：安装 GitHub Releases 预编译 Wheel（以 v0.4.3 Linux x86_64 为例）
+pip install https://github.com/0passion0/pymupdf4llm-rs/releases/download/v0.4.3/pymupdf4llm_rs-0.4.3-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
 ```
 
 ### Rust Crate / CLI 安装
@@ -83,7 +83,7 @@ pip install https://github.com/0passion0/pymupdf4llm-rs/releases/download/v0.4.2
 ```toml
 # Cargo.toml
 [dependencies]
-pymupdf4llm-rs = "0.4.2"
+pymupdf4llm-rs = "0.4.3"
 tokio = { version = "1", features = ["full"] }
 ```
 

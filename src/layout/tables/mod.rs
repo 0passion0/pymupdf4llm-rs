@@ -12,7 +12,9 @@ pub fn detect_tables(
     options: &ToMarkdownOptions,
 ) -> Vec<DetectedTable> {
     match options.table_strategy {
-        TableStrategy::Explicit => text_tables::detect_explicit_tables(page.page_index, spans, options),
+        TableStrategy::Explicit => {
+            text_tables::detect_explicit_tables(page.page_index, spans, options)
+        }
         TableStrategy::LinesStrict => line_tables::detect_line_tables(page, spans, false),
         TableStrategy::Lines => line_tables::detect_line_tables(page, spans, true),
         TableStrategy::Text => text_tables::detect_text_aligned_tables(spans),

@@ -147,7 +147,8 @@ fn push_span_from_matrices(
     };
 
     // PDF rendering mode 2 (Fill + Stroke) is widely used for faux-bold typography
-    let is_bold = font.is_bold || (gs.render_mode == 2 && gs.line_width > 0.0 && gs.line_width <= 2.5);
+    let is_bold =
+        font.is_bold || (gs.render_mode == 2 && gs.line_width > 0.0 && gs.line_width <= 2.5);
 
     out.push(TextSpan {
         text,
@@ -321,7 +322,20 @@ fn should_insert_tj_space(prev: &str, next: &str, gap_em: f32) -> bool {
     }
     if matches!(
         first_c,
-        ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '，' | '。' | '；' | '：' | '！' | '？'
+        ',' | '.'
+            | ';'
+            | ':'
+            | '!'
+            | '?'
+            | ')'
+            | ']'
+            | '}'
+            | '，'
+            | '。'
+            | '；'
+            | '：'
+            | '！'
+            | '？'
     ) {
         return gap_em > 0.45;
     }

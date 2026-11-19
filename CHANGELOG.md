@@ -5,6 +5,24 @@ All notable changes to `pymupdf4llm-rs` are documented in this file.
 
 ---
 
+## [0.4.3] - 2026-11-19
+
+### 简体中文
+- **布局与多栏解析增强**：升级 XY-Cut++ 自适应槽线切分与首行缩进/跨栏标题隔离、优化中英文混排空白插入及 PredefinedCMap 字体解析。
+- **Bug 修复**：
+  - 修复 `content_stream` 背景矩形索引借用 `&usize` 编译错误。
+  - 修复 `Lexer` 递归嵌套深度守卫（`MAX_PARSE_DEPTH`）错误被容错机制吞没导致未能返回 `Err` 的问题。
+  - 修复 `analyze_page_layout` 使用中心点判定裁剪边距导致贴近页面顶部的正文或标题被误过滤的问题，改为与 PyMuPDF `clip` 语义一致的 `bbox.intersects(&content_bbox)` 相交判定。
+
+### English
+- **Multi-Column Layout & Text Parsing**: Upgraded XY-Cut++ with adaptive gutter scaling and spanning-band isolation, refined CJK-aware whitespace insertion, and added PredefinedCMap font parsing support.
+- **Bug Fixes**:
+  - Fixed `&usize` indexing compile error when resolving background fill rectangles in `content_stream`.
+  - Fixed `Lexer` nesting depth guard errors (`MAX_PARSE_DEPTH`) being swallowed by tolerant array/dictionary recovery instead of propagating `Err`.
+  - Fixed `analyze_page_layout` margin clipping dropping top-of-page titles/spans whose ascenders lay above the margin boundary by aligning with PyMuPDF `clip` intersection semantics (`bbox.intersects(&content_bbox)`).
+
+---
+
 ## [0.4.2] - 2026-11-18
 
 ### 简体中文
