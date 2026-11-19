@@ -4,11 +4,28 @@ use std::sync::Arc;
 
 use crate::config::ToMarkdownOptions;
 use crate::error::Result;
-use crate::pdf::PdfDocument;
-use crate::pdf::TextSpan;
+use crate::layout::TextLine;
+use crate::pdf::{PdfDocument, TextSpan};
+
+const MAX_HEADER_SAMPLE_FONT_PT: f32 = 120.0;
+
+#[inline]
+fn quantize_half_pt_tenths(font_size: f32) -> i32 {
+    ((font_size * 2.0).round() as i32) * 5
+}
 
 pub trait HeaderResolver: Send + Sync {
     fn get_header_id(&self, span: &TextSpan, page_index: usize) -> String;
+
+    /// Resolves a Markdown heading prefix for a full visual `TextLine`.
+    /// Defaults to delegating to the first span via `get_header_id`, while
+    /// implementations such as `TocHeaders` override this to match the complete line text.
+    fn get_line_header_id(&self, line: &TextLine, page_index: usize) -> String {
+        line.spans
+            .first()
+            .map(|s| self.get_header_id(s, page_index))
+            .unwrap_or_default()
+    }
 }
 
 /// Default no-op header resolver when `hdr_info` is disabled.
@@ -21,13 +38,14 @@ impl HeaderResolver for NoopHeaders {
 }
 
 /// Pure-Rust replica of `pymupdf4llm.IdentifyHeaders`:
-/// Scans the document's font-size distribution weighted by character count, identifies the
-/// dominant body font size, and maps larger rounded font sizes to `# `..`###### `.
+/// Scans the document's font-size distribution weighted by character count (quantized to
+/// 0.5pt buckets while filtering extreme display/poster outliers), identifies the dominant
+/// body font size, and maps larger font sizes to `# `..`###### `.
 #[derive(Debug, Clone)]
 pub struct IdentifyHeaders {
     pub body_limit: f32,
     pub max_levels: usize,
-    pub header_sizes: Vec<(i32, usize)>, // (rounded_size_tenths, level 1..=max_levels)
+    pub header_sizes: Vec<(i32, usize)>, // (quantized_size_tenths, level 1..=max_levels)
 }
 
 impl IdentifyHeaders {
@@ -49,10 +67,14 @@ impl IdentifyHeaders {
                 let mut local = BTreeMap::new();
                 if let Ok(page) = doc.parse_page(idx, options) {
                     for span in page.spans {
-                        if span.is_monospace {
+                        if span.is_monospace
+                            || !span.font_size.is_finite()
+                            || span.font_size < 1.0
+                            || span.font_size > MAX_HEADER_SAMPLE_FONT_PT
+                        {
                             continue;
                         }
-                        let key = (span.font_size * 10.0).round() as i32;
+                        let key = quantize_half_pt_tenths(span.font_size);
                         let chars = span.text.trim().chars().count();
                         if chars > 0 {
                             *local.entry(key).or_insert(0) += chars;
@@ -70,7 +92,8 @@ impl IdentifyHeaders {
         }
 
         let body_tenths = explicit_body_limit
-            .map(|b| (b * 10.0).round() as i32)
+            .filter(|b| b.is_finite() && *b > 0.0)
+            .map(quantize_half_pt_tenths)
             .unwrap_or_else(|| {
                 counts
                     .iter()
@@ -102,12 +125,15 @@ impl IdentifyHeaders {
 
 impl HeaderResolver for IdentifyHeaders {
     fn get_header_id(&self, span: &TextSpan, _page_index: usize) -> String {
-        if span.is_monospace {
+        if span.is_monospace
+            || !span.font_size.is_finite()
+            || span.font_size > MAX_HEADER_SAMPLE_FONT_PT
+        {
             return String::new();
         }
-        let tenths = (span.font_size * 10.0).round() as i32;
+        let tenths = quantize_half_pt_tenths(span.font_size);
         for &(sz, level) in &self.header_sizes {
-            if (tenths - sz).abs() <= 4 {
+            if (tenths - sz).abs() <= 5 {
                 return format!("{} ", "#".repeat(level));
             }
         }
@@ -147,24 +173,32 @@ impl TocHeaders {
         }
         Self { page_entries }
     }
-}
 
-impl HeaderResolver for TocHeaders {
-    fn get_header_id(&self, span: &TextSpan, page_index: usize) -> String {
+    fn match_text(&self, text: &str, page_index: usize) -> String {
         let Some(entries) = self.page_entries.get(&page_index) else {
             return String::new();
         };
-        let norm_span = normalize_title(&span.text);
-        if norm_span.len() < 2 {
+        let norm_text = normalize_title(text);
+        if norm_text.chars().count() < 2 {
             return String::new();
         }
         for (level, title) in entries {
-            if title == &norm_span || title.starts_with(&norm_span) || norm_span.starts_with(title)
+            if title == &norm_text || title.starts_with(&norm_text) || norm_text.starts_with(title)
             {
                 return format!("{} ", "#".repeat(*level));
             }
         }
         String::new()
+    }
+}
+
+impl HeaderResolver for TocHeaders {
+    fn get_header_id(&self, span: &TextSpan, page_index: usize) -> String {
+        self.match_text(&span.text, page_index)
+    }
+
+    fn get_line_header_id(&self, line: &TextLine, page_index: usize) -> String {
+        self.match_text(&line.text, page_index)
     }
 }
 

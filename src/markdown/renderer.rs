@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::config::ToMarkdownOptions;
+use crate::layout::columns::{is_cjk_char, should_insert_span_space};
 use crate::layout::headers::HeaderResolver;
 use crate::layout::{LayoutPage, TextLine};
 use crate::markdown::chunk::{
@@ -30,6 +31,25 @@ enum FlowBlock {
         x1: f32,
         markdown: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SpanStyle {
+    bold: bool,
+    italic: bool,
+    monospace: bool,
+    strikeout: bool,
+}
+
+impl SpanStyle {
+    fn from_span(s: &TextSpan, options: &ToMarkdownOptions) -> Self {
+        Self {
+            bold: s.is_bold,
+            italic: s.is_italic,
+            monospace: !options.ignore_code && s.is_monospace,
+            strikeout: s.is_strikeout,
+        }
+    }
 }
 
 pub fn build_page_chunk(
@@ -238,6 +258,27 @@ pub fn build_page_chunk(
     }
 }
 
+fn should_insert_line_join_space(out: &str, next_trimmed: &str) -> bool {
+    if out.is_empty() || out.ends_with('\n') || out.ends_with(' ') {
+        return false;
+    }
+    let (Some(last_c), Some(first_c)) = (out.chars().last(), next_trimmed.chars().next()) else {
+        return false;
+    };
+    if is_cjk_char(last_c) && is_cjk_char(first_c) {
+        return false;
+    }
+    if matches!(last_c, '（' | '【' | '《' | '“')
+        || matches!(
+            first_c,
+            '，' | '。' | '；' | '：' | '！' | '？' | '）' | '】' | '》' | '”'
+        )
+    {
+        return false;
+    }
+    true
+}
+
 fn render_flow_blocks(
     blocks: &[FlowBlock],
     page_idx: usize,
@@ -248,6 +289,7 @@ fn render_flow_blocks(
     let mut out = String::new();
     let mut in_code_block = false;
     let mut prev_y_end: Option<f32> = None;
+    let mut prev_line_x0: Option<f32> = None;
     let mut prev_line_text: Option<String> = None;
 
     for block in blocks {
@@ -263,6 +305,7 @@ fn render_flow_blocks(
                 out.push_str(markdown);
                 out.push_str("\n\n");
                 prev_y_end = None;
+                prev_line_x0 = None;
                 prev_line_text = None;
             }
             FlowBlock::Image { markdown, .. } => {
@@ -276,6 +319,7 @@ fn render_flow_blocks(
                 out.push_str(markdown);
                 out.push_str("\n\n");
                 prev_y_end = None;
+                prev_line_x0 = None;
                 prev_line_text = None;
             }
             FlowBlock::Line { line, .. } => {
@@ -284,11 +328,7 @@ fn render_flow_blocks(
                     continue;
                 }
 
-                let header_prefix = line
-                    .spans
-                    .first()
-                    .map(|s| header_resolver.get_header_id(s, page_idx))
-                    .unwrap_or_default();
+                let header_prefix = header_resolver.get_line_header_id(line, page_idx);
 
                 if !options.ignore_code && line.is_all_monospace && header_prefix.is_empty() {
                     if !in_code_block {
@@ -301,6 +341,7 @@ fn render_flow_blocks(
                     out.push_str(trimmed);
                     out.push('\n');
                     prev_y_end = Some(line.bbox.y1);
+                    prev_line_x0 = Some(line.bbox.x0);
                     prev_line_text = None;
                     continue;
                 } else if in_code_block {
@@ -316,26 +357,51 @@ fn render_flow_blocks(
                     out.push_str(trimmed);
                     out.push_str("\n\n");
                     prev_y_end = Some(line.bbox.y1);
+                    prev_line_x0 = Some(line.bbox.x0);
                     prev_line_text = None;
                     continue;
                 }
 
-                if let Some(rest) = strip_bullet_prefix(trimmed) {
+                if let Some((symbol_len, full_len)) = find_bullet_prefix_lens(trimmed) {
                     if !out.is_empty() && !out.ends_with('\n') {
                         out.push('\n');
                     }
                     out.push_str("- ");
-                    out.push_str(&format_styled_spans(&line.spans, Some(rest), options));
+                    let stripped_spans = strip_bullet_symbol_from_spans(&line.spans, symbol_len);
+                    let body = if stripped_spans.is_empty() {
+                        trimmed[full_len..].trim_start().to_string()
+                    } else {
+                        format_styled_spans(&stripped_spans, options)
+                    };
+                    out.push_str(body.trim_start());
                     out.push('\n');
                     prev_y_end = Some(line.bbox.y1);
+                    prev_line_x0 = Some(line.bbox.x0);
                     prev_line_text = None;
                     continue;
                 }
 
-                let mut joined_hyphen = false;
+                if is_ordered_list_item(trimmed) {
+                    if !out.is_empty() && !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    out.push_str(&format_styled_spans(&line.spans, options));
+                    out.push('\n');
+                    prev_y_end = Some(line.bbox.y1);
+                    prev_line_x0 = Some(line.bbox.x0);
+                    prev_line_text = Some(trimmed.to_string());
+                    continue;
+                }
+
                 if let Some(py) = prev_y_end {
                     let gap = line.bbox.y0 - py;
-                    if gap > line.max_font_size * 0.85 {
+                    let indented_para = prev_line_x0.is_some_and(|px0| {
+                        line.bbox.x0 > px0 + line.max_font_size * 1.15
+                            && prev_line_text
+                                .as_deref()
+                                .is_some_and(ends_with_sentence_punct)
+                    });
+                    if gap > line.max_font_size * 0.85 || indented_para {
                         if !out.ends_with("\n\n") {
                             if !out.ends_with('\n') {
                                 out.push('\n');
@@ -346,19 +412,18 @@ fn render_flow_blocks(
                         && prev_line_text
                             .as_deref()
                             .is_some_and(|pl| should_dehyphenate_join(pl, trimmed))
-                        && out.ends_with('-')
+                        && (out.ends_with('-') || out.ends_with('\u{2010}'))
                     {
                         out.pop();
-                        joined_hyphen = true;
                         hygiene.dehyphenated_joins += 1;
-                    } else if !out.is_empty() && !out.ends_with('\n') && !out.ends_with(' ') {
+                    } else if should_insert_line_join_space(&out, trimmed) {
                         out.push(' ');
                     }
                 }
-                let _ = joined_hyphen;
 
-                out.push_str(&format_styled_spans(&line.spans, None, options));
+                out.push_str(&format_styled_spans(&line.spans, options));
                 prev_y_end = Some(line.bbox.y1);
+                prev_line_x0 = Some(line.bbox.x0);
                 prev_line_text = Some(trimmed.to_string());
             }
         }
@@ -377,27 +442,23 @@ fn render_flow_blocks(
     out
 }
 
-fn format_single_styled_span(
-    s: &TextSpan,
-    options: &ToMarkdownOptions,
-) -> (String, String, String) {
-    let raw = &s.text;
+fn wrap_run_with_style(raw: &str, style: SpanStyle) -> (String, String, String) {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return (String::new(), raw.clone(), String::new());
+        return (String::new(), raw.to_string(), String::new());
     }
     let lead_ws = raw[..raw.len() - raw.trim_start().len()].to_string();
     let trail_ws = raw[raw.trim_end().len()..].to_string();
 
-    let styled = if !options.ignore_code && s.is_monospace {
+    let styled = if style.monospace {
         format!("`{trimmed}`")
-    } else if s.is_bold && s.is_italic {
+    } else if style.bold && style.italic {
         format!("***{trimmed}***")
-    } else if s.is_bold {
+    } else if style.bold {
         format!("**{trimmed}**")
-    } else if s.is_italic {
+    } else if style.italic {
         format!("*{trimmed}*")
-    } else if s.is_strikeout {
+    } else if style.strikeout {
         format!("~~{trimmed}~~")
     } else {
         trimmed.to_string()
@@ -406,89 +467,206 @@ fn format_single_styled_span(
     (lead_ws, styled, trail_ws)
 }
 
-fn format_styled_spans(
-    spans: &[TextSpan],
-    override_plain: Option<&str>,
-    options: &ToMarkdownOptions,
-) -> String {
-    if let Some(plain) = override_plain {
-        return plain.to_string();
-    }
+/// Coalesces consecutive spans sharing identical inline Markdown styling into a single
+/// styled run (e.g. `**Hello World**` instead of `**Hello** **World**`) using CJK- and
+/// punctuation-aware inter-span spacing.
+fn format_style_runs(spans: &[TextSpan], options: &ToMarkdownOptions) -> String {
     let mut out = String::new();
     let mut i = 0usize;
 
     while i < spans.len() {
-        let s = &spans[i];
+        let style = SpanStyle::from_span(&spans[i], options);
         if i > 0 {
-            let gap = s.bbox.x0 - spans[i - 1].bbox.x1;
-            if gap > s.font_size * 0.12 && !out.ends_with(' ') && !s.text.starts_with(' ') {
+            let gap = spans[i].bbox.x0 - spans[i - 1].bbox.x1;
+            let ref_fs = spans[i].font_size.min(spans[i - 1].font_size);
+            if !out.ends_with(' ')
+                && should_insert_span_space(&spans[i - 1].text, &spans[i].text, gap, ref_fs)
+            {
                 out.push(' ');
             }
         }
 
-        // Merge consecutive spans sharing the same hyperlink URI into a single `[text](uri)` block
-        if let Some(uri) = &s.link_uri {
+        let mut j = i + 1;
+        while j < spans.len() {
+            let next_style = SpanStyle::from_span(&spans[j], options);
+            if next_style == style {
+                j += 1;
+                continue;
+            }
+            // Bridge whitespace-only separator spans when the following span restores the same style
+            if spans[j].text.trim().is_empty()
+                && j + 1 < spans.len()
+                && SpanStyle::from_span(&spans[j + 1], options) == style
+            {
+                j += 2;
+                continue;
+            }
+            break;
+        }
+
+        let mut raw_run = String::new();
+        for k in i..j {
+            if k > i {
+                let gap = spans[k].bbox.x0 - spans[k - 1].bbox.x1;
+                let ref_fs = spans[k].font_size.min(spans[k - 1].font_size);
+                if should_insert_span_space(&raw_run, &spans[k].text, gap, ref_fs) {
+                    raw_run.push(' ');
+                }
+            }
+            raw_run.push_str(&spans[k].text);
+        }
+
+        let (lead_ws, styled, trail_ws) = wrap_run_with_style(&raw_run, style);
+        out.push_str(&lead_ws);
+        out.push_str(&styled);
+        out.push_str(&trail_ws);
+        i = j;
+    }
+
+    out
+}
+
+fn format_styled_spans(spans: &[TextSpan], options: &ToMarkdownOptions) -> String {
+    let mut out = String::new();
+    let mut i = 0usize;
+
+    while i < spans.len() {
+        if i > 0 {
+            let gap = spans[i].bbox.x0 - spans[i - 1].bbox.x1;
+            let ref_fs = spans[i].font_size.min(spans[i - 1].font_size);
+            if !out.ends_with(' ')
+                && should_insert_span_space(&spans[i - 1].text, &spans[i].text, gap, ref_fs)
+            {
+                out.push(' ');
+            }
+        }
+
+        if let Some(uri) = &spans[i].link_uri {
             let mut j = i + 1;
             while j < spans.len() && spans[j].link_uri.as_deref() == Some(uri.as_str()) {
                 j += 1;
             }
-            let mut combined_inner = String::new();
-            let mut lead_ws = String::new();
-            let mut trail_ws = String::new();
-            for k in i..j {
-                let sk = &spans[k];
-                if k > i {
-                    let gap = sk.bbox.x0 - spans[k - 1].bbox.x1;
-                    if gap > sk.font_size * 0.12
-                        && !combined_inner.ends_with(' ')
-                        && !sk.text.starts_with(' ')
-                    {
-                        combined_inner.push(' ');
-                    }
-                }
-                let (lw, styled, tw) = format_single_styled_span(sk, options);
-                if k == i {
-                    lead_ws = lw;
-                } else {
-                    combined_inner.push_str(&lw);
-                }
-                combined_inner.push_str(&styled);
-                if k + 1 == j {
-                    trail_ws = tw;
-                } else {
-                    combined_inner.push_str(&tw);
-                }
-            }
-            out.push_str(&lead_ws);
-            if combined_inner.trim().is_empty() {
-                out.push_str(&combined_inner);
+            let inner = format_style_runs(&spans[i..j], options);
+            let lead_ws = &inner[..inner.len() - inner.trim_start().len()];
+            let trail_ws = &inner[inner.trim_end().len()..];
+            let trimmed = inner.trim();
+            out.push_str(lead_ws);
+            if trimmed.is_empty() {
+                out.push_str(&inner);
             } else {
-                out.push_str(&format!("[{}]({uri})", combined_inner.trim()));
+                out.push_str(&format!("[{trimmed}]({uri})"));
             }
-            out.push_str(&trail_ws);
+            out.push_str(trail_ws);
             i = j;
-            continue;
+        } else {
+            let mut j = i + 1;
+            while j < spans.len() && spans[j].link_uri.is_none() {
+                j += 1;
+            }
+            out.push_str(&format_style_runs(&spans[i..j], options));
+            i = j;
         }
-
-        let (lead_ws, styled, trail_ws) = format_single_styled_span(s, options);
-        out.push_str(&lead_ws);
-        out.push_str(&styled);
-        out.push_str(&trail_ws);
-        i += 1;
     }
+
     if !out.is_ascii() {
         out = out.nfc().collect();
     }
     out
 }
 
-fn strip_bullet_prefix(s: &str) -> Option<&str> {
-    for prefix in ["• ", "◦ ", "▪ ", "‣ ", "- ", "* "] {
-        if let Some(rest) = s.strip_prefix(prefix) {
-            return Some(rest.trim_start());
+/// Returns `(symbol_byte_len, full_prefix_byte_len)` when a line begins with a bullet marker.
+fn find_bullet_prefix_lens(s: &str) -> Option<(usize, usize)> {
+    const PREFIXES: &[&str] = &[
+        "• ", "◦ ", "▪ ", "‣ ", "● ", "○ ", "■ ", "□ ", "◆ ", "◇ ", "▸ ", "▹ ", "► ", "➢ ", "➤ ",
+        "✓ ", "✔ ", "– ", "— ", "· ", "- ", "* ",
+    ];
+    for prefix in PREFIXES {
+        if s.starts_with(prefix) && s.len() > prefix.len() {
+            return Some((prefix.trim_end().len(), prefix.len()));
         }
     }
     None
+}
+
+/// Strips `symbol_byte_len` non-whitespace bullet marker bytes from the front of `spans`
+/// and trims leading whitespace on the first remaining span without eating the first word
+/// when the space came from inter-span spatial separation.
+fn strip_bullet_symbol_from_spans(spans: &[TextSpan], symbol_byte_len: usize) -> Vec<TextSpan> {
+    let mut remaining = symbol_byte_len;
+    let mut out = Vec::with_capacity(spans.len());
+
+    for span in spans {
+        if remaining == 0 {
+            if out.is_empty() {
+                let rest = span.text.trim_start();
+                if !rest.is_empty() {
+                    let mut copy = span.clone();
+                    copy.text = rest.to_string();
+                    out.push(copy);
+                }
+            } else {
+                out.push(span.clone());
+            }
+            continue;
+        }
+
+        let trimmed_start = span.text.trim_start();
+        if trimmed_start.is_empty() {
+            continue;
+        }
+        if remaining < trimmed_start.len() {
+            let mut cut = remaining;
+            while cut < trimmed_start.len() && !trimmed_start.is_char_boundary(cut) {
+                cut += 1;
+            }
+            let rest = trimmed_start[cut..].trim_start();
+            remaining = 0;
+            if !rest.is_empty() {
+                let mut copy = span.clone();
+                copy.text = rest.to_string();
+                out.push(copy);
+            }
+        } else {
+            remaining = remaining.saturating_sub(trimmed_start.len());
+        }
+    }
+
+    out
+}
+
+fn is_ordered_list_item(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut digits = 0usize;
+    while digits < bytes.len() && digits < 3 && bytes[digits].is_ascii_digit() {
+        digits += 1;
+    }
+    if digits > 0
+        && digits + 1 < bytes.len()
+        && matches!(bytes[digits], b'.' | b')')
+        && bytes[digits + 1] == b' '
+    {
+        return true;
+    }
+    if s.starts_with('(') {
+        let rest = &bytes[1..];
+        let mut d = 0usize;
+        while d < rest.len() && d < 3 && rest[d].is_ascii_digit() {
+            d += 1;
+        }
+        if d > 0 && d + 1 < rest.len() && rest[d] == b')' && rest[d + 1] == b' ' {
+            return true;
+        }
+    }
+    false
+}
+
+fn ends_with_sentence_punct(s: &str) -> bool {
+    s.trim_end().chars().last().is_some_and(|c| {
+        matches!(
+            c,
+            '.' | '!' | '?' | ':' | '。' | '！' | '？' | '：' | '”' | '"'
+        )
+    })
 }
 
 fn extract_word_boxes(lines: &[TextLine]) -> Vec<ExtractedWord> {

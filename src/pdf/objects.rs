@@ -28,7 +28,7 @@ impl PdfObject {
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             Self::Int(i) => Some(*i),
-            Self::Real(r) => Some(*r as i64),
+            Self::Real(r) if r.is_finite() => Some(*r as i64),
             _ => None,
         }
     }
@@ -36,7 +36,7 @@ impl PdfObject {
     pub fn as_f32(&self) -> Option<f32> {
         match self {
             Self::Int(i) => Some(*i as f32),
-            Self::Real(r) => Some(*r as f32),
+            Self::Real(r) if r.is_finite() => Some(*r as f32),
             _ => None,
         }
     }
@@ -44,7 +44,7 @@ impl PdfObject {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Self::Int(i) => Some(*i as f64),
-            Self::Real(r) => Some(*r),
+            Self::Real(r) if r.is_finite() => Some(*r),
             _ => None,
         }
     }

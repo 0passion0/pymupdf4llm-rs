@@ -7,10 +7,10 @@ use dashmap::DashMap;
 
 use crate::pdf::encoding::{
     glyph_name_to_unicode, parse_tounicode_cmap, symbol_code_to_str, BaseEncoding,
-    ParsedToUnicodeCMap,
+    ParsedToUnicodeCMap, PredefinedCMap,
 };
 use crate::pdf::objects::PdfObject;
-use crate::pdf::parser::decode_stream_bytes;
+use crate::pdf::parser::decode_stream_bytes_with_objects;
 use crate::pdf::PdfDocument;
 
 const MAX_GLOBAL_CMAP_ENTRIES: usize = 512;
@@ -34,6 +34,7 @@ pub struct PdfFont {
     pub is_monospace: bool,
     pub is_two_byte: bool,
     pub base_encoding: BaseEncoding,
+    pub predefined_cmap: PredefinedCMap,
     pub to_unicode: Arc<ParsedToUnicodeCMap>,
     pub differences: Arc<HashMap<u8, String>>,
     pub widths: Arc<HashMap<u32, f32>>,
@@ -49,6 +50,7 @@ impl Default for PdfFont {
             is_monospace: false,
             is_two_byte: false,
             base_encoding: BaseEncoding::WinAnsi,
+            predefined_cmap: PredefinedCMap::None,
             to_unicode: Arc::new(ParsedToUnicodeCMap::default()),
             differences: Arc::new(HashMap::new()),
             widths: Arc::new(HashMap::new()),
@@ -78,33 +80,40 @@ impl PdfFont {
 
         let base_font = dict
             .get("BaseFont")
+            .and_then(|v| doc.resolve(v))
             .and_then(|v| v.as_name())
             .unwrap_or("Helvetica")
             .to_string();
         let lower = base_font.to_ascii_lowercase();
-        let subtype = dict.get("Subtype").and_then(|v| v.as_name()).unwrap_or("");
-        let enc_obj_opt = dict.get("Encoding").and_then(|v| doc.resolve(v));
-        let enc_name = dict
-            .get("Encoding")
+        let subtype = dict
+            .get("Subtype")
+            .and_then(|v| doc.resolve(v))
             .and_then(|v| v.as_name())
+            .unwrap_or("");
+        let enc_obj_opt = dict.get("Encoding").and_then(|v| doc.resolve(v));
+        let enc_name = enc_obj_opt
+            .and_then(|o| o.as_name())
             .or_else(|| {
                 enc_obj_opt
                     .and_then(|o| o.as_dict())
                     .and_then(|d| d.get("BaseEncoding"))
+                    .and_then(|v| doc.resolve(v))
                     .and_then(|v| v.as_name())
             })
             .unwrap_or("");
+        let predefined_cmap = PredefinedCMap::from_encoding_name(enc_name);
         let is_two_byte = subtype == "Type0"
             || enc_name.contains("Identity-H")
             || enc_name.contains("Identity-V")
-            || enc_name.contains("UCS2")
-            || enc_name.contains("UTF16")
+            || predefined_cmap != PredefinedCMap::None
             || dict.contains_key("DescendantFonts");
         let base_encoding = if enc_name.is_empty() {
             if lower == "symbol" || lower.ends_with("+symbol") || lower.ends_with(",symbol") {
                 BaseEncoding::Symbol
             } else if lower.contains("zapfdingbats") {
                 BaseEncoding::ZapfDingbats
+            } else if is_tex_ot1_font(&lower) {
+                BaseEncoding::Ot1TeX
             } else {
                 BaseEncoding::WinAnsi
             }
@@ -117,21 +126,46 @@ impl PdfFont {
             || lower.contains("heavy")
             || lower.contains("semibold")
             || lower.contains("demi")
-            || lower.ends_with("-bd");
-        let mut is_italic =
-            lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
+            || lower.ends_with("-bd")
+            || lower.contains("simhei")
+            || base_font.contains("黑体")
+            || base_font.contains("粗体")
+            || base_font.contains("加粗")
+            || base_font.contains("中粗");
+        let mut is_italic = lower.contains("italic")
+            || lower.contains("oblique")
+            || lower.contains("slant")
+            || base_font.contains("斜体");
         let mut is_monospace = lower.contains("courier")
             || lower.contains("mono")
             || lower.contains("consolas")
             || lower.contains("menlo")
             || lower.contains("inconsolata")
             || lower.contains("cmtt")
-            || (lower.contains("fira") && lower.contains("code"));
+            || (lower.contains("fira") && lower.contains("code"))
+            || base_font.contains("等宽");
 
+        let cid_dict_opt = dict
+            .get("DescendantFonts")
+            .and_then(|o| doc.resolve(o))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|o| doc.resolve(o))
+            .and_then(|v| v.as_dict());
+
+        // Per ISO 32000-1 §9.7, Type0 composite fonts place `/FontDescriptor` on the
+        // descendant CIDFont dictionary rather than on the top-level Type0 dictionary.
         let mut missing_width: Option<f32> = None;
-        if let Some(desc_obj) = dict.get("FontDescriptor") {
+        let desc_obj_opt = dict
+            .get("FontDescriptor")
+            .or_else(|| cid_dict_opt.and_then(|cd| cd.get("FontDescriptor")));
+        if let Some(desc_obj) = desc_obj_opt {
             if let Some(desc) = doc.resolve(desc_obj).and_then(|o| o.as_dict()) {
-                let flags = desc.get("Flags").and_then(|v| v.as_i64()).unwrap_or(0);
+                let flags = desc
+                    .get("Flags")
+                    .and_then(|v| doc.resolve(v))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
                 if (flags & 1) != 0 {
                     is_monospace = true;
                 }
@@ -141,17 +175,38 @@ impl PdfFont {
                 if (flags & (1 << 18)) != 0 {
                     is_bold = true;
                 }
-                if let Some(angle) = desc.get("ItalicAngle").and_then(|v| v.as_f32()) {
+                if let Some(weight) = desc
+                    .get("FontWeight")
+                    .and_then(|v| doc.resolve(v))
+                    .and_then(|v| v.as_f32())
+                {
+                    if weight >= 600.0 {
+                        is_bold = true;
+                    }
+                }
+                if let Some(angle) = desc
+                    .get("ItalicAngle")
+                    .and_then(|v| doc.resolve(v))
+                    .and_then(|v| v.as_f32())
+                {
                     if angle.abs() > 1.0 {
                         is_italic = true;
                     }
                 }
-                if let Some(stem_v) = desc.get("StemV").and_then(|v| v.as_f32()) {
+                if let Some(stem_v) = desc
+                    .get("StemV")
+                    .and_then(|v| doc.resolve(v))
+                    .and_then(|v| v.as_f32())
+                {
                     if stem_v >= 110.0 {
                         is_bold = true;
                     }
                 }
-                if let Some(mw) = desc.get("MissingWidth").and_then(|v| v.as_f32()) {
+                if let Some(mw) = desc
+                    .get("MissingWidth")
+                    .and_then(|v| doc.resolve(v))
+                    .and_then(|v| v.as_f32())
+                {
                     if mw > 0.0 {
                         missing_width = Some(mw);
                     }
@@ -160,9 +215,13 @@ impl PdfFont {
         }
 
         let mut to_unicode: Option<Arc<ParsedToUnicodeCMap>> = None;
-        if let Some(tu_obj) = dict.get("ToUnicode") {
+        let tu_obj_opt = dict
+            .get("ToUnicode")
+            .or_else(|| cid_dict_opt.and_then(|cd| cd.get("ToUnicode")));
+        if let Some(tu_obj) = tu_obj_opt {
             if let Some(PdfObject::Stream { dict: sdict, data }) = doc.resolve(tu_obj) {
-                if let Ok(cmap_bytes) = decode_stream_bytes(sdict, data) {
+                if let Ok(cmap_bytes) = decode_stream_bytes_with_objects(&doc.objects, sdict, data)
+                {
                     let key = hash_cmap_bytes(&cmap_bytes);
                     let cache = global_cmap_cache();
                     if let Some(hit) = cache.get(&key) {
@@ -182,7 +241,11 @@ impl PdfFont {
 
         let mut differences = HashMap::new();
         if let Some(enc_dict) = enc_obj_opt.and_then(|o| o.as_dict()) {
-            if let Some(diffs) = enc_dict.get("Differences").and_then(|v| v.as_array()) {
+            if let Some(diffs) = enc_dict
+                .get("Differences")
+                .and_then(|v| doc.resolve(v))
+                .and_then(|v| v.as_array())
+            {
                 let mut code: u8 = 0;
                 for item in diffs {
                     match item {
@@ -199,17 +262,35 @@ impl PdfFont {
             }
         }
 
-        let mut widths = HashMap::new();
-        let mut default_width = missing_width.unwrap_or(if is_monospace {
-            600.0
-        } else if is_two_byte {
-            1000.0
+        // Type3 fonts store widths in their own `/FontMatrix` coordinate system rather than 1/1000 em
+        let width_scale = if subtype == "Type3" {
+            dict.get("FontMatrix")
+                .and_then(|v| doc.resolve(v))
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.as_f32())
+                .map(|sx| sx.abs() * 1000.0)
+                .filter(|&s| s.is_finite() && s > 1e-4)
+                .unwrap_or(1.0)
         } else {
-            520.0
-        });
+            1.0
+        };
+
+        let mut widths = HashMap::new();
+        let mut default_width = missing_width
+            .filter(|w| w.is_finite() && *w > 0.0)
+            .map(|w| (w * width_scale).clamp(1.0, 10_000.0))
+            .unwrap_or(if is_monospace {
+                600.0
+            } else if is_two_byte {
+                1000.0
+            } else {
+                520.0
+            });
 
         let first_char = dict
             .get("FirstChar")
+            .and_then(|v| doc.resolve(v))
             .and_then(|v| v.as_i64())
             .unwrap_or(0)
             .clamp(0, u32::MAX as i64) as u32;
@@ -220,32 +301,34 @@ impl PdfFont {
         {
             for (idx, w) in arr.iter().enumerate() {
                 if let Some(val) = w.as_f32() {
-                    widths.insert(first_char.saturating_add(idx as u32), val);
+                    let scaled = val * width_scale;
+                    if scaled.is_finite() {
+                        widths.insert(
+                            first_char.saturating_add(idx as u32),
+                            scaled.clamp(0.0, 10_000.0),
+                        );
+                    }
                 }
             }
         }
 
         // Parse Type0 /DescendantFonts CID widths (/DW & /W)
-        if let Some(descendants) = dict
-            .get("DescendantFonts")
-            .and_then(|o| doc.resolve(o))
-            .and_then(|v| v.as_array())
-        {
-            if let Some(cid_dict) = descendants
-                .first()
+        if let Some(cid_dict) = cid_dict_opt {
+            if let Some(dw) = cid_dict
+                .get("DW")
                 .and_then(|o| doc.resolve(o))
-                .and_then(|v| v.as_dict())
+                .and_then(|v| v.as_f32())
             {
-                if let Some(dw) = cid_dict.get("DW").and_then(|v| v.as_f32()) {
-                    default_width = dw;
+                if dw.is_finite() && dw > 0.0 {
+                    default_width = dw.clamp(1.0, 10_000.0);
                 }
-                if let Some(w_arr) = cid_dict
-                    .get("W")
-                    .and_then(|o| doc.resolve(o))
-                    .and_then(|v| v.as_array())
-                {
-                    parse_cid_widths(w_arr, &mut widths);
-                }
+            }
+            if let Some(w_arr) = cid_dict
+                .get("W")
+                .and_then(|o| doc.resolve(o))
+                .and_then(|v| v.as_array())
+            {
+                parse_cid_widths(w_arr, &mut widths);
             }
         }
 
@@ -256,6 +339,7 @@ impl PdfFont {
             is_monospace,
             is_two_byte,
             base_encoding,
+            predefined_cmap,
             to_unicode,
             differences: Arc::new(differences),
             widths: Arc::new(widths),
@@ -287,7 +371,9 @@ impl PdfFont {
                     }
                 }
                 let (code, step) = matched.unwrap_or_else(|| {
-                    if i + 1 < bytes.len() {
+                    if self.predefined_cmap == PredefinedCMap::EucVariable && bytes[i] < 0x80 {
+                        (bytes[i] as u32, 1)
+                    } else if i + 1 < bytes.len() {
                         (u16::from_be_bytes([bytes[i], bytes[i + 1]]) as u32, 2)
                     } else {
                         (bytes[i] as u32, 1)
@@ -299,7 +385,7 @@ impl PdfFont {
                     space_count += 1;
                 }
 
-                if let Some(mapped) = self.to_unicode.mappings.get(&code) {
+                if let Some(mapped) = self.to_unicode.lookup(step as u8, code) {
                     if let Some(norm) = self.normalize_tounicode_mapping(code, step, mapped) {
                         out.push_str(&norm);
                     } else if step == 1 {
@@ -322,12 +408,74 @@ impl PdfFont {
             return (out, total_width, glyph_count, space_count);
         }
 
+        // PDF 2.0 UTF-8 predefined CMaps (e.g. `UniGB-UTF8-H`) without explicit ToUnicode
+        if self.is_two_byte
+            && self.predefined_cmap == PredefinedCMap::Utf8
+            && self.to_unicode.mappings.is_empty()
+        {
+            let text = String::from_utf8_lossy(bytes);
+            for ch in text.chars() {
+                if !ch.is_control() || ch == '\n' || ch == '\t' {
+                    out.push(ch);
+                }
+                glyph_count += 1;
+                if ch == ' ' {
+                    space_count += 1;
+                }
+                let cp = ch as u32;
+                let fallback_w = if cp < 0x80 { 500.0 } else { self.default_width };
+                total_width += self.widths.get(&cp).copied().unwrap_or(fallback_w);
+            }
+            return (out, total_width, glyph_count, space_count);
+        }
+
+        // Variable-width EUC/Shift-JIS/Big5 CMaps: keep 1-byte ASCII aligned cleanly
+        if self.is_two_byte && self.predefined_cmap == PredefinedCMap::EucVariable {
+            let mut i = 0usize;
+            while i < bytes.len() {
+                let b = bytes[i];
+                if b < 0x80 {
+                    let code = b as u32;
+                    glyph_count += 1;
+                    if b == b' ' {
+                        space_count += 1;
+                    }
+                    if let Some(mapped) = self.to_unicode.lookup(1, code) {
+                        if let Some(norm) = self.normalize_tounicode_mapping(code, 1, mapped) {
+                            out.push_str(&norm);
+                        }
+                    } else if (0x20..=0x7E).contains(&b) || b == b'\n' || b == b'\t' {
+                        out.push(b as char);
+                    }
+                    total_width += self.widths.get(&code).copied().unwrap_or(500.0);
+                    i += 1;
+                } else if i + 1 < bytes.len() {
+                    let code = u16::from_be_bytes([b, bytes[i + 1]]) as u32;
+                    glyph_count += 1;
+                    if let Some(mapped) = self.to_unicode.lookup(2, code) {
+                        if let Some(norm) = self.normalize_tounicode_mapping(code, 2, mapped) {
+                            out.push_str(&norm);
+                        }
+                    }
+                    total_width += self
+                        .widths
+                        .get(&code)
+                        .copied()
+                        .unwrap_or(self.default_width);
+                    i += 2;
+                } else {
+                    break;
+                }
+            }
+            return (out, total_width, glyph_count, space_count);
+        }
+
         if self.is_two_byte && bytes.len() >= 2 {
             let mut i = 0;
             while i + 1 < bytes.len() {
                 let code = u16::from_be_bytes([bytes[i], bytes[i + 1]]) as u32;
                 glyph_count += 1;
-                if let Some(mapped) = self.to_unicode.mappings.get(&code) {
+                if let Some(mapped) = self.to_unicode.lookup(2, code) {
                     if let Some(norm) = self.normalize_tounicode_mapping(code, 2, mapped) {
                         out.push_str(&norm);
                     }
@@ -363,7 +511,7 @@ impl PdfFont {
                 if b == b' ' {
                     space_count += 1;
                 }
-                if let Some(mapped) = self.to_unicode.mappings.get(&code) {
+                if let Some(mapped) = self.to_unicode.lookup(1, code) {
                     if let Some(norm) = self.normalize_tounicode_mapping(code, 1, mapped) {
                         out.push_str(&norm);
                     } else {
@@ -439,6 +587,22 @@ impl PdfFont {
     }
 }
 
+fn is_tex_ot1_font(lower_base_font: &str) -> bool {
+    let core = lower_base_font
+        .rsplit_once('+')
+        .map(|(_, s)| s)
+        .unwrap_or(lower_base_font);
+    ["cmr", "cmbx", "cmti", "cmsl", "cmss", "cmcsc"]
+        .iter()
+        .any(|prefix| {
+            core.starts_with(prefix)
+                && core[prefix.len()..]
+                    .bytes()
+                    .next()
+                    .is_some_and(|b| b.is_ascii_digit())
+        })
+}
+
 fn parse_cid_widths(arr: &[PdfObject], out: &mut HashMap<u32, f32>) {
     let mut i = 0;
     while i < arr.len() {
@@ -454,7 +618,12 @@ fn parse_cid_widths(arr: &[PdfObject], out: &mut HashMap<u32, f32>) {
             PdfObject::Array(widths) => {
                 for (offset, w) in widths.iter().enumerate() {
                     if let Some(val) = w.as_f32() {
-                        out.insert(c_start.saturating_add(offset as u32), val);
+                        if val.is_finite() {
+                            out.insert(
+                                c_start.saturating_add(offset as u32),
+                                val.clamp(0.0, 10_000.0),
+                            );
+                        }
                     }
                 }
                 i += 2;
@@ -462,10 +631,13 @@ fn parse_cid_widths(arr: &[PdfObject], out: &mut HashMap<u32, f32>) {
             PdfObject::Int(c_end_raw) => {
                 if i + 2 < arr.len() {
                     if let Some(w) = arr[i + 2].as_f32() {
-                        let c_end = (*c_end_raw).clamp(0, u32::MAX as i64) as u32;
-                        if c_end >= c_start {
-                            for cid in c_start..=c_end.min(c_start.saturating_add(4096)) {
-                                out.insert(cid, w);
+                        if w.is_finite() {
+                            let clamped = w.clamp(0.0, 10_000.0);
+                            let c_end = (*c_end_raw).clamp(0, u32::MAX as i64) as u32;
+                            if c_end >= c_start {
+                                for cid in c_start..=c_end.min(c_start.saturating_add(4096)) {
+                                    out.insert(cid, clamped);
+                                }
                             }
                         }
                     }

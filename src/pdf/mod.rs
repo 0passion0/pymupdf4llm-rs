@@ -140,10 +140,16 @@ impl PdfDocument {
     }
 
     pub fn resolve<'a>(&'a self, obj: &'a objects::PdfObject) -> Option<&'a objects::PdfObject> {
-        match obj {
-            objects::PdfObject::Reference(num, _) => self.objects.get(num),
-            other => Some(other),
+        let mut current = obj;
+        for _ in 0..8 {
+            match current {
+                objects::PdfObject::Reference(num, _) => {
+                    current = self.objects.get(num)?;
+                }
+                other => return Some(other),
+            }
         }
+        None
     }
 
     pub fn parse_page(&self, page_idx: usize, options: &ToMarkdownOptions) -> Result<ParsedPage> {

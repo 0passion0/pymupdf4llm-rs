@@ -55,10 +55,19 @@ pub fn sanitize_span_text(
             '\u{00A0}' | '\u{2002}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => {
                 out.push(' ');
             }
-            // Common Wingdings / Symbol PUA bullets & checkmarks
+            // Common Wingdings / Symbol PUA bullets, math symbols & arrows
+            '\u{F02D}' => out.push('-'),
             '\u{F0B7}' | '\u{F0A7}' | '\u{F076}' => out.push('•'),
             '\u{F0FC}' | '\u{F052}' => out.push('✓'),
             '\u{F0E0}' | '\u{F0E8}' => out.push_str("->"),
+            '\u{F0B0}' => out.push('°'),
+            '\u{F0B1}' => out.push('±'),
+            '\u{F0B4}' => out.push('×'),
+            '\u{F0B8}' => out.push('÷'),
+            '\u{F0A3}' => out.push('≤'),
+            '\u{F0B3}' => out.push('≥'),
+            '\u{F0B9}' => out.push('≠'),
+            '\u{F0BB}' => out.push('≈'),
             // Strip soft hyphens, zero-width chars, BOM, replacement char, and unmapped PUA
             '\u{00AD}' | '\u{200B}'..='\u{200F}' | '\u{FEFF}' | '\u{FFFD}' => {
                 stats.mojibake_chars_removed += 1;
@@ -75,56 +84,129 @@ pub fn sanitize_span_text(
     out
 }
 
-/// Filters invisible text (`3 Tr`), rotated diagonal watermarks, and deduplicates
-/// faux-bold double-struck spans (same text within <= 1.2pt offset).
+fn is_watermark_keyword(raw_text: &str) -> bool {
+    let trimmed = raw_text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let upper = trimmed.to_ascii_uppercase();
+    if matches!(
+        upper.as_str(),
+        "CONFIDENTIAL"
+            | "DRAFT"
+            | "WATERMARK"
+            | "DO NOT DISTRIBUTE"
+            | "SAMPLE"
+            | "INTERNAL USE ONLY"
+            | "FOR INTERNAL USE ONLY"
+            | "PROPRIETARY"
+    ) {
+        return true;
+    }
+    let compact: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    matches!(
+        compact.as_str(),
+        "内部资料"
+            | "机密"
+            | "绝密"
+            | "保密"
+            | "草稿"
+            | "仅供内部参考"
+            | "仅供参考"
+            | "严禁外传"
+            | "样本"
+            | "水印"
+            | "机密文件"
+    )
+}
+
+/// Filters invisible text (`3 Tr`), rotated diagonal watermarks (English & Chinese), and
+/// deduplicates faux-bold double-struck spans across the entire page in O(1) amortized time
+/// via a 4pt spatial hash bucket grid.
 pub fn filter_and_dedup_spans(
     spans: Vec<TextSpan>,
     cfg: &TextHygieneConfig,
     stats: &mut HygieneStats,
 ) -> Vec<TextSpan> {
+    const BUCKET_SIZE: f32 = 4.0;
     let mut kept: Vec<TextSpan> = Vec::with_capacity(spans.len());
+    let mut buckets: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
 
     for span in spans {
         if cfg.ignore_invisible_text && span.render_mode == 3 {
             stats.invisible_spans_filtered += 1;
             continue;
         }
-        if cfg.strip_watermarks && span.rotation_deg.abs() > 12.0 && span.alpha < 0.75 {
-            stats.watermarks_filtered += 1;
-            continue;
-        }
-        if cfg.strip_watermarks && span.rotation_deg.abs() > 20.0 && span.font_size >= 24.0 {
-            let upper = span.text.trim().to_ascii_uppercase();
-            if matches!(
-                upper.as_str(),
-                "CONFIDENTIAL"
-                    | "DRAFT"
-                    | "WATERMARK"
-                    | "DO NOT DISTRIBUTE"
-                    | "SAMPLE"
-                    | "INTERNAL USE ONLY"
-            ) {
-                stats.watermarks_filtered += 1;
-                continue;
-            }
-        }
-
-        if cfg.dedup_faux_bold {
-            let trimmed = span.text.trim();
-            if !trimmed.is_empty() {
-                let is_dup = kept.iter().rev().take(12).any(|prev| {
-                    prev.text.trim() == trimmed
-                        && (prev.bbox.x0 - span.bbox.x0).abs() <= 1.5
-                        && (prev.bbox.y0 - span.bbox.y0).abs() <= 1.5
-                        && (prev.font_size - span.font_size).abs() <= 0.5
-                });
-                if is_dup {
-                    stats.faux_bold_deduped += 1;
+        if cfg.ignore_invisible_text {
+            if let Some(bg) = span.bg_color_rgb {
+                let dr = (span.color_rgb.0 - bg.0).abs();
+                let dg = (span.color_rgb.1 - bg.1).abs();
+                let db = (span.color_rgb.2 - bg.2).abs();
+                if dr < 0.03 && dg < 0.03 && db < 0.03 {
+                    stats.invisible_spans_filtered += 1;
                     continue;
                 }
             }
         }
+        if cfg.strip_watermarks && span.rotation_deg.abs() > 12.0 && span.alpha < 0.75 {
+            stats.watermarks_filtered += 1;
+            continue;
+        }
+        if cfg.strip_watermarks
+            && span.rotation_deg.abs() > 20.0
+            && span.font_size >= 24.0
+            && is_watermark_keyword(&span.text)
+        {
+            stats.watermarks_filtered += 1;
+            continue;
+        }
+
+        let bucket_coords = if span.bbox.x0.is_finite() && span.bbox.y0.is_finite() {
+            Some((
+                (span.bbox.x0 / BUCKET_SIZE).floor() as i32,
+                (span.bbox.y0 / BUCKET_SIZE).floor() as i32,
+            ))
+        } else {
+            None
+        };
+
+        if cfg.dedup_faux_bold {
+            let trimmed = span.text.trim();
+            if !trimmed.is_empty() {
+                if let Some((bx, by)) = bucket_coords {
+                    let mut is_dup = false;
+                    'probe: for dx in -1..=1 {
+                        for dy in -1..=1 {
+                            if let Some(indices) = buckets.get(&(bx + dx, by + dy)) {
+                                for &idx in indices {
+                                    let prev = &kept[idx];
+                                    if prev.text.trim() == trimmed
+                                        && (prev.bbox.x0 - span.bbox.x0).abs() <= 1.5
+                                        && (prev.bbox.y0 - span.bbox.y0).abs() <= 1.5
+                                        && (prev.font_size - span.font_size).abs() <= 0.5
+                                    {
+                                        is_dup = true;
+                                        break 'probe;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if is_dup {
+                        stats.faux_bold_deduped += 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        let kept_idx = kept.len();
         kept.push(span);
+        if cfg.dedup_faux_bold {
+            if let Some(key) = bucket_coords {
+                buckets.entry(key).or_default().push(kept_idx);
+            }
+        }
     }
 
     kept
@@ -156,19 +238,45 @@ pub fn detect_running_headers_footers(
 }
 
 pub fn normalize_running_signature(text: &str) -> String {
-    text.trim()
+    let masked: String = text
+        .trim()
         .chars()
         .map(|c| {
-            if c.is_ascii_digit() {
+            if c.is_ascii_digit() || ('０'..='９').contains(&c) {
                 '#'
             } else {
                 c.to_ascii_lowercase()
             }
         })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect();
+    let mut parts: Vec<&str> = masked.split_whitespace().collect();
+    if let Some(last) = parts.last_mut() {
+        if is_small_roman_numeral(last) {
+            *last = "#";
+        }
+    }
+    parts.join(" ")
+}
+
+fn is_small_roman_numeral(token: &str) -> bool {
+    matches!(
+        token,
+        "i" | "ii"
+            | "iii"
+            | "iv"
+            | "v"
+            | "vi"
+            | "vii"
+            | "viii"
+            | "ix"
+            | "x"
+            | "xi"
+            | "xii"
+            | "xiii"
+            | "xiv"
+            | "xv"
+            | "xvi"
+    )
 }
 
 /// Joins hyphenated line wraps (`architec-` + `ture` -> `architecture`) when the next token
@@ -176,10 +284,17 @@ pub fn normalize_running_signature(text: &str) -> String {
 pub fn should_dehyphenate_join(prev_line: &str, next_line: &str) -> bool {
     let prev = prev_line.trim_end();
     let next = next_line.trim_start();
-    if !prev.ends_with('-') || prev.ends_with("--") || prev.ends_with(" -") {
+    let stripped = if let Some(s) = prev.strip_suffix('-') {
+        if prev.ends_with("--") || prev.ends_with(" -") {
+            return false;
+        }
+        s
+    } else if let Some(s) = prev.strip_suffix('\u{2010}') {
+        s
+    } else {
         return false;
-    }
-    let before_hyphen = prev[..prev.len() - 1].chars().last();
+    };
+    let before_hyphen = stripped.chars().last();
     let first_next = next.chars().next();
     matches!(
         (before_hyphen, first_next),
